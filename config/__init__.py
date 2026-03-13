@@ -1,5 +1,5 @@
-from .component_config import TrainerOracleConfig
+from .component_config import QLearnerConfig
 
 __all__ = [
-    "TrainerOracleConfig"
+    "QLearnerConfig"
 ]

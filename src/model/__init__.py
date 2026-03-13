@@ -1,5 +1,5 @@
-from .trainer_oracle import TrainerOracle
+from .q_learner import QLearner
 
 __all__ = [
-    "TrainerOracle"
+    "QLearner"
 ]

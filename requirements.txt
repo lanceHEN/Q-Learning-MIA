@@ -1,0 +1,7 @@
+gym
+stable_baselines3
+algos
+pytorch-tcn
+mujoco-py<2.2,>=2.1
+tqdm
+rich

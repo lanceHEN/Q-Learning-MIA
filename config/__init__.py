@@ -1,5 +1,9 @@
-from .component_config import TrainerOracleConfig
+from .component_config import (
+    TrainerOracleConfig, RandomDataOracleConfig, QLearnerDataOracleConfig
+)
 
 __all__ = [
-    "TrainerOracleConfig"
+    "TrainerOracleConfig",
+    "RandomDataOracleConfig",
+    "QLearnerDataOracleConfig"
 ]

@@ -50,7 +50,10 @@ class TrainerOracle:
         self.q_table[state][action] = new_q
         self.update_counts[state][action] = n_updates + 1
         
-    def optimal_state_val(self, state):
+    def optimal_state_val(self, state) -> int:
+        """
+        Produces max Q value for given state.
+        """
         return max(self.q_table[self, state].values(), default=0)
         
     def train(self, trajectories: List[List[Tuple]], training_steps: int):
@@ -78,5 +81,6 @@ class TrainerOracle:
                 self._q_update(*traj)
                 
             self.train_timesteps += 1
-            
-        print("Finished training")
+        
+        if self.verbose == 1:
+            print("Finished training")

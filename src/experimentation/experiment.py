@@ -5,6 +5,10 @@ from typing import List, Tuple
 import gymnasium as gym
 import numpy as np
 from matplotlib import pyplot as plt
+import numpy as np
+import seaborn as sns
+from scipy import stats
+from sklearn.metrics import accuracy_score
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -17,8 +21,10 @@ src_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(src_dir))
 from model import (
     QLearnerDataOracle,
-    TrainerOracle
+    TrainerOracle,
+    MIAClassifier
 )
+
 
 # Make env
 env = gym.make("Taxi-v3")
@@ -55,37 +61,16 @@ trainer_oracle = TrainerOracle(trainer_oracle_config)
 # Run Q learning on train trajectories
 trainer_oracle.train(train_trajectories, 100000)
 
-# Examine Bellman residuals
-train_membership_scores = []
-for traj in train_trajectories:
-    s = 0
-    for (state, action, reward, next_state) in traj:
-        max_next_val = trainer_oracle.optimal_state_val(next_state)
-        gamma = trainer_oracle.discount_factor
-        q_val = trainer_oracle.q_table[state][action]
-        
-        s += (reward + gamma*max_next_val - q_val)**2
+# Initialize and use MIA Classifier
+mia_classifier = MIAClassifier(trainer_oracle)
 
-    train_membership_scores.append(s / len(traj))
-    
-print(f"Mean train trajectory membership score: {np.mean(train_membership_scores)}")
-plt.xlim(0,.02)
-plt.hist(train_membership_scores, bins=10)
-plt.show()
+mia_classifier.train(train_trajectories, external_trajectories, fp_rate=0.05)
 
-external_membership_scores = []
-for traj in external_trajectories:
-    s = 0
-    for (state, action, reward, next_state) in traj:
-        max_next_val = trainer_oracle.optimal_state_val(next_state)
-        gamma = trainer_oracle.discount_factor
-        q_val = trainer_oracle.q_table[state][action]
-        
-        s += (reward + gamma*max_next_val - q_val)**2
+print(f"Learned eta: {mia_classifier.eta}")
 
-    external_membership_scores.append(s / len(traj))
-    
-print(f"Mean external trajectory membership score: {np.mean(external_membership_scores)}")
-plt.xlim(0,.02)
-plt.hist(external_membership_scores, bins=10)
-plt.show()
+# Get predictions
+train_predictions = mia_classifier.predict_memberships(train_trajectories)
+external_predictions = mia_classifier.predict_memberships(external_trajectories)
+
+print(f"Train trajectories accuracy: {np.mean(train_predictions)}")
+print(f"External trajectories accuracy: {1 - np.mean(external_predictions)}")

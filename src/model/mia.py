@@ -1,5 +1,8 @@
 from typing import List, Tuple
 
+import numpy as np
+from scipy import stats
+
 from model import TrainerOracle
 
 class MIAClassifier:
@@ -28,16 +31,38 @@ class MIAClassifier:
             
         return s / len(traj)
     
-    def predict_membership(self, traj: List[Tuple]):
+    def predict_membership(self, traj: List[Tuple]) -> int:
         """
         Predicts whether trajectory was used in training the model, returning
         1 for training and 0 for external.
         """
-        
         membership_score = self._traj_membership_score(traj)
         return int(membership_score < self.eta)
-    
-    def train(self, train_trajectories, external_trajectories):
-        
-        
 
+    def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
+        """
+        Predicts whether each trajectory was used in training the model, returning
+        binary numpy array with 1s for training and 0s for external.
+        """
+        return np.array([self.predict_membership(traj) for traj in trajs])
+    
+    def train(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float) -> None:
+        """
+        Given the training and external trajectories, learns a threshold eta,
+        such that if a given membership score is below eta it is considered
+        a training trajectory, and is otherwise an external trajectory.
+        
+        This is accomplished by running the Neyman-Pearson lemma with the given
+        false positive rate fp_rate, applied to the distributions according to
+        the member and non-member hypotheses.
+        
+        These distributions are assumed to be gamma.
+        """
+        # Distributions for train and external membership scores
+        nonmember_scores = np.array([self._traj_membership_score(traj) for traj in external_trajectories])
+        
+        # Get Gamma params for nonmember (H_0) dist
+        alpha, _, beta = stats.gamma.fit(nonmember_scores, floc=0)
+        
+        # Inverse cdf to fp_rate
+        self.eta = stats.gamma.ppf(fp_rate, a=alpha, scale=beta)

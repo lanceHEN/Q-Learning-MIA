@@ -46,7 +46,7 @@ class MIAClassifier:
         """
         return np.array([self.predict_membership(traj) for traj in trajs])
     
-    def train(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float) -> None:
+    def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float) -> None:
         """
         Given the training and external trajectories, learns a threshold eta,
         such that if a given membership score is below eta it is considered

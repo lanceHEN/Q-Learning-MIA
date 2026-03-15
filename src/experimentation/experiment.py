@@ -14,7 +14,8 @@ root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
 from config import (
     TrainerOracleConfig,
-    QLearnerDataOracleConfig
+    QLearnerDataOracleConfig,
+    ExperimentRunnerConfig
 )
 
 src_dir = Path(__file__).parent.parent
@@ -25,52 +26,96 @@ from model import (
     MIAClassifier
 )
 
+class ExperimentRunner:
+    
+    def __init__(self, config: ExperimentRunnerConfig):
+        """
+        Initializes an ExperimentRunner with the given config.
+        """
+        self.env = config.env
+        self.T_max = config.T_max
+        self.seed = config.seed
+        self.data_oracle_config = config.data_oracle_config
+        self.data_oracle_train_timesteps = config.data_oracle_train_timesteps
+        self.n_trajectories = config.n_trajectories
+        self.train_external_split = config.train_external_split
+        self.trainer_oracle_config = config.trainer_oracle_config
+        self.trainer_oracle_train_timesteps = config.trainer_oracle_train_timesteps
+        self.fp_rate = config.fp_rate
+    
+    def run_experiment(self):
+        """
+        Runs a basic MIA experiment, constructing data and train oracles and
+        performing an MIA attack.
+        """
+        
 
-# Make env
-env = gym.make("Taxi-v3")
+        # Construct data oracle
+        data_oracle = QLearnerDataOracle(self.data_oracle_config)
 
-T_max = 100
+        # Train for some timesteps
+        data_oracle.train(self.data_oracle_train_timesteps)
 
-seed = 1
+        # Generate trajectories
 
-# Construct data oracle
-data_oracle_config = QLearnerDataOracleConfig(
-    env=env
-)
+        trajectories = data_oracle.generate_trajectories(self.n_trajectories, self.T_max, self.seed)
+        
+        n_train = round(self.train_external_split * self.n_trajectories)
 
-data_oracle = QLearnerDataOracle(data_oracle_config)
+        train_trajectories = trajectories[:n_train]
+        external_trajectories = trajectories[n_train:]
 
-# Train for some timesteps
-data_oracle.train(10000)
+        trainer_oracle = TrainerOracle(self.trainer_oracle_config)
 
-# Generate trajectories
-n_trajectories = 10000
+        # Run Q learning on train trajectories
+        trainer_oracle.train(train_trajectories, self.trainer_oracle_train_timesteps)
 
-trajectories = data_oracle.generate_trajectories(n_trajectories, T_max, seed)
+        # Initialize and use MIA Classifier
+        mia_classifier = MIAClassifier(trainer_oracle)
 
-train_trajectories = trajectories[:n_trajectories // 2]
-external_trajectories = trajectories[n_trajectories // 2:]
+        mia_classifier.train(train_trajectories, external_trajectories, fp_rate=self.fp_rate)
 
-# Initialize Trainer Oracle
-trainer_oracle_config = TrainerOracleConfig(
-    buffer_size=100000
-)
+        print(f"Learned eta: {mia_classifier.eta}")
 
-trainer_oracle = TrainerOracle(trainer_oracle_config)
+        # Get predictions
+        train_predictions = mia_classifier.predict_memberships(train_trajectories)
+        external_predictions = mia_classifier.predict_memberships(external_trajectories)
 
-# Run Q learning on train trajectories
-trainer_oracle.train(train_trajectories, 100000)
-
-# Initialize and use MIA Classifier
-mia_classifier = MIAClassifier(trainer_oracle)
-
-mia_classifier.train(train_trajectories, external_trajectories, fp_rate=0.05)
-
-print(f"Learned eta: {mia_classifier.eta}")
-
-# Get predictions
-train_predictions = mia_classifier.predict_memberships(train_trajectories)
-external_predictions = mia_classifier.predict_memberships(external_trajectories)
-
-print(f"Train trajectories accuracy: {np.mean(train_predictions)}")
-print(f"External trajectories accuracy: {1 - np.mean(external_predictions)}")
+        print(f"Train trajectories accuracy: {np.mean(train_predictions)}")
+        print(f"External trajectories accuracy: {1 - np.mean(external_predictions)}")
+        
+def main():
+    env = gym.make("Taxi-v3")
+    T_max = 100
+    verbose = 1
+    seed = 1
+    
+    data_oracle_config = QLearnerDataOracleConfig(
+        env=env,
+        verbose=verbose,
+        random_seed=seed
+    )
+    
+    trainer_oracle_config = TrainerOracleConfig(
+        verbose=verbose
+    )
+    
+    experiment_config = ExperimentRunnerConfig(
+        env=env,
+        data_oracle_config=data_oracle_config,
+        trainer_oracle_config=trainer_oracle_config,
+        T_max=T_max,
+        seed=seed,
+        data_oracle_train_timesteps=10000,
+        n_trajectories=10000,
+        train_external_split=0.5,
+        trainer_oracle_train_timesteps=100000,
+        fp_rate=0.05
+    )
+    
+    experiment_runner = ExperimentRunner(experiment_config)
+    
+    experiment_runner.run_experiment()
+    
+if __name__ == "__main__":
+    main()

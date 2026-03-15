@@ -22,3 +22,4 @@ class ExperimentRunnerConfig:
     train_external_split: float = 0.5
     trainer_oracle_train_timesteps: int = 100000
     fp_rate: float = 0.05
+    mia_train_test_split: float = 0.8

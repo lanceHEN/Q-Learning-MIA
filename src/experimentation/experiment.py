@@ -42,6 +42,7 @@ class ExperimentRunner:
         self.trainer_oracle_config = config.trainer_oracle_config
         self.trainer_oracle_train_timesteps = config.trainer_oracle_train_timesteps
         self.fp_rate = config.fp_rate
+        self.mia_train_test_split = config.mia_train_test_split
     
     def run_experiment(self):
         """
@@ -61,6 +62,7 @@ class ExperimentRunner:
         trajectories = data_oracle.generate_trajectories(self.n_trajectories, self.T_max, self.seed)
         
         n_train = round(self.train_external_split * self.n_trajectories)
+        n_external = self.n_trajectories - n_train
 
         train_trajectories = trajectories[:n_train]
         external_trajectories = trajectories[n_train:]
@@ -72,14 +74,23 @@ class ExperimentRunner:
 
         # Initialize and use MIA Classifier
         mia_classifier = MIAClassifier(trainer_oracle)
+        
+        # Train/test split for train/external
+        
+        
+        train_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_train)]
+        train_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_train):]
+        
+        external_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_external)]
+        external_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_external):]
 
-        mia_classifier.train(train_trajectories, external_trajectories, fp_rate=self.fp_rate)
+        mia_classifier.fit(train_trajectories_fit, external_trajectories_fit, fp_rate=self.fp_rate)
 
         print(f"Learned eta: {mia_classifier.eta}")
 
-        # Get predictions
-        train_predictions = mia_classifier.predict_memberships(train_trajectories)
-        external_predictions = mia_classifier.predict_memberships(external_trajectories)
+        # Get predictions on trajs not used to fit
+        train_predictions = mia_classifier.predict_memberships(train_trajectories_nonfit)
+        external_predictions = mia_classifier.predict_memberships(external_trajectories_nonfit)
 
         print(f"Train trajectories accuracy: {np.mean(train_predictions)}")
         print(f"External trajectories accuracy: {1 - np.mean(external_predictions)}")

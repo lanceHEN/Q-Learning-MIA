@@ -27,6 +27,11 @@ from model import (
 )
 
 class ExperimentRunner:
+    """
+    The ExperimentRunner class is used to run basic tests on training an MIA
+    model to see how well it can perform.
+    """
+    
     
     def __init__(self, config: ExperimentRunnerConfig):
         """
@@ -49,8 +54,6 @@ class ExperimentRunner:
         Runs a basic MIA experiment, constructing data and train oracles and
         performing an MIA attack.
         """
-        
-
         # Construct data oracle
         data_oracle = QLearnerDataOracle(self.data_oracle_config)
 
@@ -76,13 +79,11 @@ class ExperimentRunner:
         mia_classifier = MIAClassifier(trainer_oracle)
         
         # Train/test split for train/external
-        
-        
         train_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_train)]
         train_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_train):]
         
-        external_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_external)]
-        external_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_external):]
+        external_trajectories_fit = external_trajectories[:round(self.mia_train_test_split * n_external)]
+        external_trajectories_nonfit = external_trajectories[round(self.mia_train_test_split * n_external):]
 
         mia_classifier.fit(train_trajectories_fit, external_trajectories_fit, fp_rate=self.fp_rate)
 

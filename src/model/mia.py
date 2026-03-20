@@ -2,19 +2,25 @@ from typing import List, Tuple
 
 import numpy as np
 from scipy import stats
+from sklearn.metrics import roc_curve
+from matplotlib import pyplot as plt
 
 from model import TrainerOracle
 
 class MIAClassifier:
     """
     Learns an optimal threshold eta to distinguish training from external trajectory
-    Bellman residuals.
+    Bellman residuals, using the Neyman-Pearson Lemma.
     """
     
     
     def __init__(self, trainer_oracle: TrainerOracle):
         self.trainer_oracle = trainer_oracle
         self.eta = None
+        self.a0 = None
+        self.b0 = None
+        self.a1 = None
+        self.b1 = None
     
     def _traj_membership_score(self, traj: List[Tuple]) -> float:
         """
@@ -36,8 +42,10 @@ class MIAClassifier:
         Predicts whether trajectory was used in training the model, returning
         1 for training and 0 for external.
         """
-        membership_score = self._traj_membership_score(traj)
-        return int(membership_score < self.eta)
+        score = self._traj_membership_score(traj)
+        ratio = stats.gamma.pdf(score, a=self.a1, scale=self.b1) / stats.gamma.pdf(score, a=self.a0, scale=self.b0) 
+        
+        return ratio > self.eta
 
     def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
         """
@@ -48,21 +56,37 @@ class MIAClassifier:
     
     def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float) -> None:
         """
-        Given the training and external trajectories, learns a threshold eta,
-        such that if a given membership score is below eta it is considered
-        a training trajectory, and is otherwise an external trajectory.
-        
-        This is accomplished by running the Neyman-Pearson lemma with the given
-        false positive rate fp_rate, applied to the distributions according to
-        the member and non-member hypotheses.
-        
-        These distributions are assumed to be gamma.
+        Given the training and external trajectories, learns their Gamma distributions
+        and a threshold eta resulting in a likelihood ratio test with the given false positive rate.
         """
         # Distributions for train and external membership scores
+        member_scores = np.array([self._traj_membership_score(traj) for traj in train_trajectories])
         nonmember_scores = np.array([self._traj_membership_score(traj) for traj in external_trajectories])
+        all_scores = np.concatenate((nonmember_scores, member_scores))
         
         # Get Gamma params for nonmember (H_0) dist
-        alpha, _, beta = stats.gamma.fit(nonmember_scores, floc=0)
+        self.a0, _, self.b0 = stats.gamma.fit(nonmember_scores, floc=0)
         
-        # Inverse cdf to fp_rate
-        self.eta = stats.gamma.ppf(fp_rate, a=alpha, scale=beta)
+        # Same for member H_1
+        self.a1, _, self.b1 = stats.gamma.fit(member_scores, floc=0)
+        
+        # Use ROC to solve for eta
+        labels = np.concatenate((np.zeros(len(external_trajectories)), np.ones(len(train_trajectories))))
+        
+        lr_scores = stats.gamma.pdf(all_scores, a=self.a1, scale=self.b1) / stats.gamma.pdf(all_scores, a=self.a0, scale=self.b0)
+        
+        fp_rates, _, thresholds = roc_curve(labels, lr_scores)
+    
+        threshold_idx = np.argmin(abs(fp_rates - fp_rate))
+        self.eta = thresholds[threshold_idx]
+        
+        xp = np.linspace(0,np.max(member_scores))
+        yp0 = stats.gamma.pdf(xp, a=self.a0, scale=self.b0)
+        yp1 = stats.gamma.pdf(xp, a=self.a1, scale=self.b1)
+        
+        print(self.a0, self.b0, self.a1, self.b1)
+        
+        plt.plot(xp, yp0, color="red", label="p0")
+        plt.plot(xp, yp1, color="blue", label="p1")
+        plt.legend()
+        plt.show()

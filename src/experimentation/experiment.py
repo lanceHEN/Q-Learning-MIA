@@ -119,10 +119,10 @@ def main():
         T_max=T_max,
         seed=seed,
         data_oracle_train_timesteps=10000,
-        n_trajectories=10000,
+        n_trajectories=500,
         train_external_split=0.5,
-        trainer_oracle_train_timesteps=100000,
-        fp_rate=0.05
+        trainer_oracle_train_timesteps=1000000,
+        fp_rate=0.2
     )
     
     experiment_runner = ExperimentRunner(experiment_config)

@@ -12,7 +12,7 @@ class TrainerOracleConfig:
     """
     Stores config info for TrainerOracle.
     """
-    discount_factor: float = 0.99
+    discount_factor: float = 0.999
     verbose: int = 0
     buffer_size: int = 10000
     buffer_batch_size: int = 32
@@ -35,7 +35,7 @@ class QLearnerDataOracleConfig:
     learning_starts: int = 1000
     buffer_size: int = 10000
     buffer_batch_size: int = 32
-    epsilon: float = 0.99
-    decay_rate: float = 0.99
+    epsilon: float = 1
+    decay_rate: float = 0.999
     random_seed: int = 1
     

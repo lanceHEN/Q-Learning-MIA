@@ -26,7 +26,18 @@ class DataOracle(ABC):
         self.verbose = verbose
         
     @abstractmethod
-    def _select_action(self, state):
+    def _select_action(self, state: int) -> int:
+        """
+        Produces an action for the given state. Method for doing that
+        left to subclasses.
+        
+        Args:
+            state (int): State to produce an action for.
+            
+        Returns:
+            int: Action for given state.
+        """
+        
         pass
         
     def _gen_trajectory(self, T_max: int) -> List[Tuple]:
@@ -86,7 +97,7 @@ class DataOracle(ABC):
 
             trajectories.append(traj)
             
-        if self.verbose > 0:
+        if self.verbose:
             print("Finished generating training trajectories.")
             
         return trajectories
@@ -106,9 +117,15 @@ class RandomDataOracle(DataOracle):
         """
         super().__init__(config.env)
         
-    def _select_action(self, state):
+    def _select_action(self, state: int) -> int:
         """
-        Selects action according to random policy. Note state isn't used.
+        Selects action for given state according to random policy. Note state isn't used.
+        
+        Args:
+            state (int): State to produce an action for.
+            
+        Returns:
+            int: Action for given state.
         """
         return self.env.action_space.sample()
     
@@ -142,9 +159,15 @@ class QLearnerDataOracle(DataOracle):
         random.seed(config.random_seed)
     
     
-    def _select_action(self, state):
+    def _select_action(self, state: int) -> int:
         """
-        Selects an action via epsilon-greedy.
+        Selects an action for the given state via epsilon-greedy.
+        
+        Args:
+            state (int): State to produce an action for.
+            
+        Returns:
+            int: Action for given state.
         """
         
         if random.random() < self.epsilon:
@@ -153,9 +176,15 @@ class QLearnerDataOracle(DataOracle):
         else:
             return max(self.q_table[state], key=self.q_table[state].get) if self.q_table[state] else self.env.action_space.sample()
     
-    def _q_update(self, state, action, reward, next_state):
+    def _q_update(self, state: int, action: int, reward: float, next_state: int) -> None:
         """
-        Runs a standard Q learning update.
+        Runs a standard Q learning update with the given (s,a,r,s') info.
+        
+        Args:
+            state (int): Initial state.
+            action (int): Transition action.
+            reward (float): Transition reward.
+            next_state (int): Next state.
         """
         n_updates = self.update_counts[state][action]
         old_q = self.q_table[state][action]
@@ -171,6 +200,9 @@ class QLearnerDataOracle(DataOracle):
         """
         Trains self for the given number of learning timesteps. Only samples
         from replay buffer once learning_starts is reached.
+        
+        Args:
+            learn_timesteps (int): Number of timesteps to learn.
         """
         print(f"Training Q Learner Data Oracle for {learn_timesteps} timesteps")
         
@@ -197,5 +229,6 @@ class QLearnerDataOracle(DataOracle):
                 
             self.train_timesteps += 1
             self.epsilon *= self.decay_rate
-            
-        print("Finished training")
+           
+        if self.verbose: 
+            print("Finished training")

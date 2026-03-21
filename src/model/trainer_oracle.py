@@ -13,7 +13,6 @@ class TrainerOracle:
     may then be used for MIAs.
     """
     
-    
     def __init__(self, config: TrainerOracleConfig):
         """
         Initializes a TrainerOracle with the given config info.
@@ -34,9 +33,15 @@ class TrainerOracle:
         
         self.discount_factor = config.discount_factor
 
-    def _q_update(self, state, action, reward, next_state):
+    def _q_update(self, state: int, action: int, reward: float, next_state: int):
         """
-        Runs a standard Q learning update.
+        Runs a standard Q learning update with the given (s,a,r,s') info.
+        
+        Args:
+            state (int): Initial state.
+            action (int): Transition action.
+            reward (float): Transition reward.
+            next_state (int): Next state.
         """
         #print(state)
         #print(action)
@@ -50,7 +55,7 @@ class TrainerOracle:
         self.q_table[state][action] = new_q
         self.update_counts[state][action] = n_updates + 1
         
-    def optimal_state_val(self, state) -> int:
+    def optimal_state_val(self, state: int) -> float:
         """
         Produces max Q value for given state.
         """
@@ -69,7 +74,7 @@ class TrainerOracle:
                 of (state, action, reward, next_state) tuples.
             learn_timesteps (int): How many steps to train for.
         """
-        if self.verbose == 1:
+        if self.verbose:
             print(f"Training on {len(trajectories)} trajectories for {training_steps} training steps")
         
         for traj in trajectories:   
@@ -82,5 +87,5 @@ class TrainerOracle:
                 
             self.train_timesteps += 1
         
-        if self.verbose == 1:
+        if self.verbose:
             print("Finished training")

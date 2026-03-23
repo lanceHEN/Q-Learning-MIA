@@ -118,14 +118,16 @@ class MIAClassifier:
         threshold_idx = np.argmin(abs(fp_rates - fp_rate))
         self.eta = thresholds[threshold_idx]
         
-        xp = np.linspace(0,np.max(member_scores))
-        yp0 = stats.gamma.pdf(xp, a=self.a0, scale=self.b0)
-        yp1 = stats.gamma.pdf(xp, a=self.a1, scale=self.b1)
+        # Prints learned params
         
-        print(self.a0, self.b0, self.a1, self.b1)
+        # print(self.a0, self.b0, self.a1, self.b1)
         
-        plt.plot(xp, yp0, color="red", label="p0")
-        plt.plot(xp, yp1, color="blue", label="p1")
-        plt.axvline(x=self.eta, color="black", label="eta")
-        plt.legend()
-        plt.show()
+        # Plots learned dists on top one another
+        # xp = np.linspace(0,np.max(member_scores))
+        # yp0 = stats.gamma.pdf(xp, a=self.a0, scale=self.b0)
+        # yp1 = stats.gamma.pdf(xp, a=self.a1, scale=self.b1)
+        # plt.plot(xp, yp0, color="red", label="p0")
+        # plt.plot(xp, yp1, color="blue", label="p1")
+        # plt.axvline(x=self.eta, color="black", label="eta")
+        # plt.legend()
+        # plt.show()

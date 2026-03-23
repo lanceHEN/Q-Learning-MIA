@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import random
 from collections import defaultdict, deque
 
@@ -25,19 +25,30 @@ class DataOracle(ABC):
         self.env = env
         self.verbose = verbose
         
+    @staticmethod
+    def _encode_state(state: Union[int, np.ndarray]) -> Union[int, Tuple]:
+        """
+        Produces a hashable version of the raw state. If it's an int leaves it
+        as-is. If it's a numpy array turns it into a tuple of the flattened
+        version.
+        """
+        if isinstance(state, np.ndarray):
+            return tuple(state.flatten())
+        else:
+            return state
+        
     @abstractmethod
-    def _select_action(self, state: int) -> int:
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
         Produces an action for the given state. Method for doing that
         left to subclasses.
         
         Args:
-            state (int): State to produce an action for.
+            state (Union[int, Tuple]): State to produce an action for.
             
         Returns:
-            int: Action for given state.
+            Union[int, Tuple]: Action for given state.
         """
-        
         pass
         
     def _gen_trajectory(self, T_max: int) -> List[Tuple]:
@@ -56,12 +67,12 @@ class DataOracle(ABC):
         current_state, _ = self.env.reset()
         for _ in range(T_max):
             # Get the action
-            action = self._select_action(current_state)
+            action = self._select_action(DataOracle._encode_state(current_state))
 
             # Step through environment
             next_state, reward, done, _, _ = self.env.step(action)
 
-            traj.append((current_state, action, reward, next_state))
+            traj.append((DataOracle._encode_state(current_state), action, reward, DataOracle._encode_state(next_state)))
 
             if done:
                 break
@@ -117,15 +128,15 @@ class RandomDataOracle(DataOracle):
         """
         super().__init__(config.env)
         
-    def _select_action(self, state: int) -> int:
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
         Selects action for given state according to random policy. Note state isn't used.
         
         Args:
-            state (int): State to produce an action for.
+            state (Union[int, Tuple]): State to produce an action for.
             
         Returns:
-            int: Action for given state.
+            Union[int, Tuple]: Action for given state.
         """
         return self.env.action_space.sample()
     
@@ -159,15 +170,15 @@ class QLearnerDataOracle(DataOracle):
         random.seed(config.random_seed)
     
     
-    def _select_action(self, state: int) -> int:
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
         Selects an action for the given state via epsilon-greedy.
         
         Args:
-            state (int): State to produce an action for.
+            state (Union[int, Tuple]): State to produce an action for.
             
         Returns:
-            int: Action for given state.
+            Union[int, Tuple]: Action for given state.
         """
         
         if random.random() < self.epsilon:
@@ -176,15 +187,15 @@ class QLearnerDataOracle(DataOracle):
         else:
             return max(self.q_table[state], key=self.q_table[state].get) if self.q_table[state] else self.env.action_space.sample()
     
-    def _q_update(self, state: int, action: int, reward: float, next_state: int) -> None:
+    def _q_update(self, state: Union[int, Tuple], action: Union[int, Tuple], reward: float, next_state: Union[int, Tuple]) -> None:
         """
         Runs a standard Q learning update with the given (s,a,r,s') info.
         
         Args:
-            state (int): Initial state.
-            action (int): Transition action.
+            state (Union[int, Tuple]): Initial state.
+            action (Union[int, Tuple]): Transition action.
             reward (float): Transition reward.
-            next_state (int): Next state.
+            next_state (Union[int, Tuple]): Next state.
         """
         n_updates = self.update_counts[state][action]
         old_q = self.q_table[state][action]
@@ -211,11 +222,11 @@ class QLearnerDataOracle(DataOracle):
         done = False
     
         for _ in range(learn_timesteps):
-            action = self._select_action(state)
+            action = self._select_action(DataOracle._encode_state(state))
             
             next_state, reward, done, _, _ = self.env.step(action)
             
-            self.replay_buffer.append((state, action, reward, next_state))
+            self.replay_buffer.append((DataOracle._encode_state(state), action, reward, DataOracle._encode_state(next_state)))
             
             if self.train_timesteps >= self.learning_starts:
                 batch = random.sample(self.replay_buffer, self.buffer_batch_size)

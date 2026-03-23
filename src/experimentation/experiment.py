@@ -8,7 +8,9 @@ from matplotlib import pyplot as plt
 import numpy as np
 import seaborn as sns
 from scipy import stats
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+import pandas as pd
+import minigrid
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -49,10 +51,11 @@ class ExperimentRunner:
         self.fp_rate = config.fp_rate
         self.mia_train_test_split = config.mia_train_test_split
     
-    def run_experiment(self):
+    def run_experiment(self) -> Tuple[float, float, float, float]:
         """
         Runs a basic MIA experiment, constructing data and train oracles and
-        performing an MIA attack.
+        performing an MIA attack according to the given config. Returns accuracy,
+        precision, and recall scores, along with the learned LRT threshold.
         """
         # Construct data oracle
         data_oracle = QLearnerDataOracle(self.data_oracle_config)
@@ -78,6 +81,8 @@ class ExperimentRunner:
         # Initialize and use MIA Classifier
         mia_classifier = MIAClassifier(trainer_oracle)
         
+        
+        
         # Train/test split for train/external
         train_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_train)]
         train_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_train):]
@@ -87,17 +92,79 @@ class ExperimentRunner:
 
         mia_classifier.fit(train_trajectories_fit, external_trajectories_fit, fp_rate=self.fp_rate)
 
-        print(f"Learned eta: {mia_classifier.eta}")
+        # print(f"Learned eta: {mia_classifier.eta}")
 
         # Get predictions on trajs not used to fit
         train_predictions = mia_classifier.predict_memberships(train_trajectories_nonfit)
         external_predictions = mia_classifier.predict_memberships(external_trajectories_nonfit)
+        
+        preds = np.concatenate((train_predictions, external_predictions))
+        
+        labels = np.concatenate((np.ones((len(train_predictions))), np.zeros((len(external_predictions)))))
 
-        print(f"Train trajectories accuracy: {np.mean(train_predictions)}")
-        print(f"External trajectories accuracy: {1 - np.mean(external_predictions)}")
+        accuracy = accuracy_score(labels, preds)
+        precision = precision_score(labels, preds)
+        recall = recall_score(labels, preds)
+        
+        return accuracy, precision, recall, mia_classifier.eta
+    
+def test_hyperparams(experiment_config: ExperimentRunnerConfig,
+                     n_trajectories_list: List[int] = [500],
+                     train_external_split_list: List[float] = [0.5],
+                     trainer_oracle_train_timesteps_list: List[int] = [1000000],
+                     fp_rate_list: List[float] = [0.05]) -> pd.DataFrame:
+    """
+    Produces a table of train/test classification metrics and learned LRT thresholds
+    for each possible configuration from the given lists. Overrides the values given
+    in experiment_config for each test.
+    """
+    # The following lists keep track of combinations and results to make the table.
+    n_traj = []
+    splits = []
+    steps = []
+    rates = []
+    
+    accuracies = []
+    precisions = []
+    recalls = []
+    etas = []
+    
+    for n_trajectories in n_trajectories_list:
+        for train_external_split in train_external_split_list:
+            for trainer_oracle_train_timesteps in trainer_oracle_train_timesteps_list:
+                for fp_rate in fp_rate_list:
+                    experiment_config.n_trajectories = n_trajectories
+                    experiment_config.train_external_split_list = train_external_split_list
+                    experiment_config.trainer_oracle_train_timesteps = trainer_oracle_train_timesteps
+                    experiment_config.fp_rate = fp_rate
+                    
+                    experiment_runner = ExperimentRunner(experiment_config)
+    
+                    accuracy, precision, recall, eta = experiment_runner.run_experiment()
+                    
+                    n_traj.append(n_trajectories)
+                    splits.append(train_external_split)
+                    steps.append(trainer_oracle_train_timesteps)
+                    rates.append(fp_rate)
+                    
+                    accuracies.append(accuracy)
+                    precisions.append(precision)
+                    recalls.append(recall)
+                    etas.append(eta)
+                    
+    return pd.DataFrame({
+        "N. Trajectories":n_traj,
+        "Train/External Traj Split":splits,
+        "Trainer Oracle Timesteps":steps,
+        "FP Rate":rates,
+        "Accuracy":accuracies,
+        "Precision":precisions,
+        "Recall":recalls,
+        "Eta":etas
+    })  
         
 def main():
-    env = gym.make("Taxi-v3")
+    env = gym.make("MiniGrid-FourRooms-v0")
     T_max = 100
     verbose = 1
     seed = 1
@@ -122,12 +189,17 @@ def main():
         n_trajectories=500,
         train_external_split=0.5,
         trainer_oracle_train_timesteps=1000000,
-        fp_rate=0.2
+        fp_rate=0.05
     )
     
-    experiment_runner = ExperimentRunner(experiment_config)
+    table = test_hyperparams(experiment_config,
+                     n_trajectories_list = [250],
+                     train_external_split_list = [0.5],
+                     trainer_oracle_train_timesteps_list = [1000000],
+                     fp_rate_list = [0.05])
+    table.to_csv("hyperparam_results_mg.csv")
     
-    experiment_runner.run_experiment()
+    print(table)
     
 if __name__ == "__main__":
     main()

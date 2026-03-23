@@ -1,6 +1,6 @@
 from collections import defaultdict, deque
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import gymnasium as gym
 
@@ -33,15 +33,15 @@ class TrainerOracle:
         
         self.discount_factor = config.discount_factor
 
-    def _q_update(self, state: int, action: int, reward: float, next_state: int):
+    def _q_update(self, state: Union[int, Tuple], action: Union[int, Tuple], reward: float, next_state: Union[int, Tuple]):
         """
         Runs a standard Q learning update with the given (s,a,r,s') info.
         
         Args:
-            state (int): Initial state.
-            action (int): Transition action.
+            state (Union[int, Tuple]): Initial state.
+            action (Union[int, Tuple]): Transition action.
             reward (float): Transition reward.
-            next_state (int): Next state.
+            next_state (Union[int, Tuple]): Next state.
         """
         #print(state)
         #print(action)
@@ -55,11 +55,11 @@ class TrainerOracle:
         self.q_table[state][action] = new_q
         self.update_counts[state][action] = n_updates + 1
         
-    def optimal_state_val(self, state: int) -> float:
+    def optimal_state_val(self, state: Union[int, Tuple]) -> float:
         """
         Produces max Q value for given state.
         """
-        return max(self.q_table[self, state].values(), default=0)
+        return max(self.q_table[state].values(), default=0)
         
     def train(self, trajectories: List[List[Tuple]], training_steps: int):
         """

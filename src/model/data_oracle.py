@@ -65,7 +65,9 @@ class DataOracle(ABC):
         traj = []
 
         current_state, _ = self.env.reset()
-        for _ in range(T_max):
+        done = False
+        t = 0
+        while not done:
             # Get the action
             action = self._select_action(DataOracle._encode_state(current_state))
 
@@ -74,10 +76,11 @@ class DataOracle(ABC):
 
             traj.append((DataOracle._encode_state(current_state), action, reward, DataOracle._encode_state(next_state)))
 
-            if done:
-                break
-
             current_state = next_state
+            
+            t += 1
+            if t == T_max:
+                break
             
         return traj
     

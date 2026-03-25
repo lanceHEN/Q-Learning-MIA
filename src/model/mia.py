@@ -43,11 +43,10 @@ class MIAClassifier:
             float: Trajectory membership score.
         """
         s = 0
+        gamma = self.trainer_oracle.discount_factor
         for (state, action, reward, next_state) in traj:
             max_next_val = self.trainer_oracle.optimal_state_val(next_state)
-            gamma = self.trainer_oracle.discount_factor
             q_val = self.trainer_oracle.q_table[state][action]
-        
             s += (reward + gamma*max_next_val - q_val)**2
             
         return s / len(traj)
@@ -69,7 +68,7 @@ class MIAClassifier:
         score = self._traj_membership_score(traj)
         ratio = stats.gamma.pdf(score, a=self.a1, scale=self.b1) / stats.gamma.pdf(score, a=self.a0, scale=self.b0) 
         
-        return ratio > self.eta
+        return int(ratio > self.eta)
 
     def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
         """

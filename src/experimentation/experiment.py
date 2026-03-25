@@ -10,7 +10,9 @@ import seaborn as sns
 from scipy import stats
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 import pandas as pd
-import minigrid
+import ale_py
+
+
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -164,8 +166,10 @@ def test_hyperparams(experiment_config: ExperimentRunnerConfig,
     })  
         
 def main():
-    env = gym.make("MiniGrid-FourRooms-v0")
-    T_max = 100
+    
+    gym.register_envs(ale_py)
+    env = gym.make("ALE/Pong-ram-v5")
+    T_max = float('inf')
     verbose = 1
     seed = 1
     
@@ -195,9 +199,9 @@ def main():
     table = test_hyperparams(experiment_config,
                      n_trajectories_list = [250],
                      train_external_split_list = [0.5],
-                     trainer_oracle_train_timesteps_list = [1000000],
-                     fp_rate_list = [0.05])
-    table.to_csv("hyperparam_results_mg.csv")
+                     trainer_oracle_train_timesteps_list = [10000000],
+                     fp_rate_list = [0.05,0.1,0.15,0.2,0.25])
+    table.to_csv("hyperparam_results_pong_2.csv")
     
     print(table)
     

@@ -1,10 +1,12 @@
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict
 import random
 from collections import defaultdict, deque
 from abc import ABC, abstractmethod
 
 import gymnasium as gym
 import numpy as np
+
+from config import QLearnerConfig
 
 class GenericModel(ABC):
     """
@@ -66,12 +68,12 @@ class GenericModel(ABC):
         t = 0
         while not done:
             # Get the action
-            action = self._select_action(QLearner._encode_state(current_state))
+            action = self._select_action(GenericModel._encode_state(current_state))
 
             # Step through environment
             next_state, reward, done, _, _ = self.env.step(action)
 
-            traj.append((QLearner._encode_state(current_state), action, reward, QLearner._encode_state(next_state)))
+            traj.append((GenericModel._encode_state(current_state), action, reward, GenericModel._encode_state(next_state)))
 
             current_state = next_state
             
@@ -113,45 +115,41 @@ class GenericModel(ABC):
             
         return trajectories
     
-
 class QLearner(GenericModel):
     """
     This class works to de-duplicate code between any common Q-learning implementations.
     """
     
-    def __init__(self, env: gym.Env, buffer_size: int, buffer_batch_size: int, verbose: int, discount_factor: float):
+    def __init__(self, config: QLearnerConfig):
         """
-        Initializes a QLearner with the given environment, buffer size, .
+        Initializes a QLearner with the given config information.
         
         Args:
-            env (gym.Env): The environment to generate trajectories for.
+            config (QLearnerConfig): Config info.
         """
-        super().__init__(env, verbose)
+        super().__init__(config.env, config.verbose)
         
         self.q_table = defaultdict(lambda: defaultdict(float))
-        self.update_counts = defaultdict(lambda: defaultdict(int))
+        self.alpha = config.alpha
         
-        self.replay_buffer = deque(maxlen=buffer_size)
-        self.buffer_batch_size = buffer_batch_size
+        self.replay_buffer = deque(maxlen=config.buffer_size)
+        self.buffer_batch_size = config.buffer_batch_size
         
-        self.discount_factor = discount_factor
+        self.discount_factor = config.discount_factor
+        
+        self.epsilon = config.epsilon
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
-        Selects an action for the given state via epsilon-greedy.
+        Selects an action for the given state.
         
         Args:
             state (Union[int, Tuple]): State to produce an action for.
             
         Returns:
             Union[int, Tuple]: Action for given state.
-        """
-        
-        if random.random() < self.epsilon:
-            # Random choice
-            return self.env.action_space.sample()
-        else:
-            return max(self.q_table[state], key=self.q_table[state].get) if self.q_table[state] else self.env.action_space.sample()
+        """  
+        return max(self.q_table[state], key=self.q_table[state].get) if self.q_table[state] else self.env.action_space.sample()
     
     def _q_update(self, state: Union[int, Tuple], action: Union[int, Tuple], reward: float, next_state: Union[int, Tuple]) -> None:
         """
@@ -163,18 +161,8 @@ class QLearner(GenericModel):
             reward (float): Transition reward.
             next_state (Union[int, Tuple]): Next state.
         """
-        n_updates = self.update_counts[state][action]
         old_q = self.q_table[state][action]
         
-        alpha = 1 / (1 + n_updates)
-        
-        new_q = (1 - alpha) * old_q  + alpha * (reward + self.discount_factor * max(self.q_table[next_state].values(), default=0))
+        new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max(self.q_table[next_state].values(), default=0))
         
         self.q_table[state][action] = new_q
-        self.update_counts[state][action] = n_updates + 1
-        
-    def optimal_state_val(self, state: Union[int, Tuple]) -> float:
-        """
-        Produces max Q value for given state.
-        """
-        return max(self.q_table[state].values(), default=0)

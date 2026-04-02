@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 
+from .component_config import SARSAMIAConfig
+
 @dataclass
 class ExperimentRunnerConfig:
     """
@@ -15,6 +17,10 @@ class ExperimentRunnerConfig:
     env: gym.Env
     data_oracle_config: object
     trainer_oracle_config: object
+    deep_data_oracle: bool = False
+    deep_trainer_oracle: bool = False
+    sarsa_attacker: bool = False
+    sarsa_config: SARSAMIAConfig = None
     T_max: int = 100
     seed: int = 1
     data_oracle_train_timesteps: int = 10000

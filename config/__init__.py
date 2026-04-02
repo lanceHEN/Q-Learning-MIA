@@ -1,7 +1,8 @@
 from .component_config import (
-    TrainerOracleConfig, QLearnerTrainerOracleConfig, DQNTrainerOracleConfig,
+    TrainerOracleConfig, QLearnerTrainerOracleConfig, DeepTrainerOracleConfig,
     RandomDataOracleConfig, QLearnerDataOracleConfig, SARSAMIAConfig,
-    QLearnerConfig, DQNConfig, DataOracleConfig, DQNDataOracleConfig
+    QLearnerConfig, DataOracleConfig, DQNDataOracleConfig,
+    DeepOfflineTrainerOracleConfig, DeepOnlineTrainerOracleConfig
 )
 
 from .experiment_config import ExperimentRunnerConfig
@@ -9,7 +10,7 @@ from .experiment_config import ExperimentRunnerConfig
 __all__ = [
     "TrainerOracleConfig",
     "QLearnerTrainerOracleConfig",
-    "DQNTrainerOracleConfig",
+    "DeepTrainerOracleConfig",
     "RandomDataOracleConfig",
     "QLearnerDataOracleConfig",
     "ExperimentRunnerConfig",
@@ -17,5 +18,7 @@ __all__ = [
     "QLearnerConfig",
     "DQNConfig",
     "DataOracleConfig",
-    "DQNDataOracleConfig"
+    "DQNDataOracleConfig",
+    "DeepOfflineTrainerOracleConfig",
+    "DeepOnlineTrainerOracleConfig"
 ]

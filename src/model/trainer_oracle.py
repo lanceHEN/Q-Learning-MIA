@@ -1,14 +1,23 @@
+from __future__ import annotations
 from collections import defaultdict, deque
 import random
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, TYPE_CHECKING
 from abc import ABC, abstractmethod
 
 import gymnasium as gym
 from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
 import torch
 
-from config import TrainerOracleConfig, QLearnerTrainerOracleConfig, DQNTrainerOracleConfig
+if TYPE_CHECKING:
+    from config import (
+        TrainerOracleConfig,
+        QLearnerTrainerOracleConfig,
+        DeepTrainerOracleConfig,
+        DeepOfflineTrainerOracleConfig,
+        DeepOnlineTrainerOracleConfig
+    )
 from .generic_model import GenericModel, QLearner
 
 class TrainerOracle(GenericModel):
@@ -34,18 +43,20 @@ class TrainerOracle(GenericModel):
         pass
     
     @abstractmethod
-    def train(self, trajectories: List[List[Tuple]], training_steps: int):
+    def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
         """
-        Trains self on the given trajectories for the given number of training_steps.
-        
-        Starts by adding the trajectories to the replay buffer. For each training step,
-        samples a batch of size buffer_batch_size from the buffer and runs Q learning
-        on them.
+        Trains self for the given number of training_steps, returning the given
+        number of training and external trajectories.
         
         Args:
-            trajectories (List[List[Tuple]]): List of trajectories, each being a list
-                of (state, action, reward, next_state) tuples.
             learn_timesteps (int): How many steps to train for.
+            n_train (int): Number of training trajectories to generate.
+            n_external (int): Number of external trajectories to generate.
+            T_max (int): Maximal number of steps in a trajectory.
+            seed (int): Optional random seed for reproducibility.
+        Returns:
+            Tuple[List[Tuple], List[Tuple]]: Training and external trajectories,
+                respectively.
         """
         pass
     
@@ -67,9 +78,13 @@ class QLearnerTrainerOracle(TrainerOracle):
         """
         Initializes a QLearnerTrainerOracle with the given config info.
         
+        NOTE: The Data Oracle should be trained before being fed in.
+        
         Args:
             config (QLearnerTrainerOracleConfig): Config info for QLearnerTrainerOracle. 
         """
+        from config import TrainerOracleConfig
+        
         super().__init__(TrainerOracleConfig(
             config.env,
             config.alpha,
@@ -77,8 +92,8 @@ class QLearnerTrainerOracle(TrainerOracle):
             config.verbose
         ))
         
-        self.q_learner = QLearner(config.q_learner_config) # compose w/ q learner
-        self.train_timesteps = 0 # Keep track of training data to allow training multiple times.
+        self.data_oracle = config.data_oracle
+        self.q_learner = config.q_learner # compose w/ q learner
         
     def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
         """
@@ -86,34 +101,42 @@ class QLearnerTrainerOracle(TrainerOracle):
         """
         return self.q_learner.q_table[state][action]
     
-    def train(self, trajectories: List[List[Tuple]], training_steps: int):
+    def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
         """
-        Trains self on the given trajectories for the given number of training_steps.
-        
-        Starts by adding the trajectories to the replay buffer. For each training step,
-        samples a batch of size buffer_batch_size from the buffer and runs Q learning
-        on them.
+        Trains self for the given number of training_steps, returning the given
+        number of training and external trajectories.
         
         Args:
-            trajectories (List[List[Tuple]]): List of trajectories, each being a list
-                of (state, action, reward, next_state) tuples.
             learn_timesteps (int): How many steps to train for.
+            n_train (int): Number of training trajectories to generate.
+            n_external (int): Number of external trajectories to generate.
+            T_max (int): Maximal number of steps in a trajectory.
+            seed (int): Optional random seed for reproducibility.
+        Returns:
+            Tuple[List[Tuple], List[Tuple]]: Training and external trajectories,
+                respectively.
         """
-        if self.verbose:
-            print(f"Training on {len(trajectories)} trajectories for {training_steps} training steps")
         
-        for traj in trajectories:   
+        trajectories = self.data_oracle.generate_trajectories(n_train + n_external, T_max, seed)
+        
+        train_trajectories = trajectories[:n_train]
+        external_trajectories = trajectories[n_train:]
+        
+        if self.verbose:
+            print(f"Training on {len(train_trajectories)} trajectories for {training_steps} training steps")
+        
+        for traj in train_trajectories:
             self.q_learner.replay_buffer.extend(traj)
     
-        for _ in range(training_steps):
+        for train_timesteps in range(training_steps):
             batch = random.sample(self.q_learner.replay_buffer, self.q_learner.buffer_batch_size)
             for traj in batch:
                 self.q_learner._q_update(*traj)
-                
-            self.train_timesteps += 1
         
         if self.verbose:
             print("Finished training")
+            
+        return train_trajectories, external_trajectories
             
     def optimal_state_val(self, state: Union[int, Tuple]) -> float:
         """
@@ -135,13 +158,14 @@ class QLearnerTrainerOracle(TrainerOracle):
             
 class DeepTrainerOracle(TrainerOracle):
     """
-    A DQN-based trainer oracle.
+    Abstracts common implementation details between the Offline/Online
     """
     
-    def __init__(self, config: DQNTrainerOracleConfig):
+    def __init__(self, config: DeepTrainerOracleConfig):
         """
         Initializes with given config info.
         """
+        from config import TrainerOracleConfig
         
         super().__init__(TrainerOracleConfig(
             config.env,
@@ -150,16 +174,7 @@ class DeepTrainerOracle(TrainerOracle):
             config.verbose
         ))
         
-        self.dqn = DQN(policy=config.dqn_config.policy,
-                       env=config.dqn_config.env,
-                       verbose=config.dqn_config.verbose,
-                       learning_rate=config.dqn_config.alpha,
-                       learning_starts=config.dqn_config.learning_starts,
-                       exploration_fraction=config.dqn_config.exploration_fraction,
-                       exploration_final_eps=config.dqn_config.exploration_final_eps,
-                       batch_size=config.dqn_config.batch_size,
-                       buffer_size=config.dqn_config.buffer_size,
-                       optimize_memory_usage=config.dqn_config.optimize_memory_usage)
+        self.dqn = config.dqn
         
     def _q_vals(self, state: Union[int, Tuple]):
         """
@@ -183,42 +198,6 @@ class DeepTrainerOracle(TrainerOracle):
         
         return q_values[0, action].item()
     
-    def train(self, trajectories: List[List[Tuple]], training_steps: int):
-        """
-        Trains self on the given trajectories for the given number of training_steps.
-        
-        Args:
-            trajectories (List[List[Tuple]]): List of trajectories, each being a list
-                of (state, action, reward, next_state) tuples.
-            learn_timesteps (int): How many steps to train for.
-        """
-        # Test if online works better
-        # self.dqn.learn(total_timesteps=training_steps)
-        # return
-        
-        for traj in trajectories:
-            n = len(traj)
-            
-            for i in range(n):
-                if i == n - 1:
-                    done = True
-                else:
-                    done = False
-                
-                state = traj[i][0]
-                action = traj[i][1]
-                reward = traj[i][2]
-                next_state = traj[i][3]
-                
-                self.dqn.replay_buffer.add(
-                    np.array(state),
-                    np.array(next_state),
-                    np.array([action]),
-                    np.array([reward]),
-                    np.array([done]),
-                    [{}]
-                )
-        
         self.dqn.learn(training_steps)
         
     def optimal_state_val(self, state: Union[int, Tuple]) -> float:
@@ -246,3 +225,144 @@ class DeepTrainerOracle(TrainerOracle):
         if action.ndim == 0:
             action = int(action)
         return action
+
+class DeepOfflineTrainerOracle(DeepTrainerOracle):
+    """
+    A DQN-based trainer oracle with offline learning.
+    """
+    
+    def __init__(self, config: DeepOfflineTrainerOracleConfig):
+        """
+        Initializes with given config info.
+        """
+        
+        from config import DeepTrainerOracleConfig
+        
+        super().__init__(DeepTrainerOracleConfig(
+            config.env,
+            config.alpha,
+            config.discount_factor,
+            config.verbose,
+            config.dqn
+        ))
+        
+        self.data_oracle = config.data_oracle
+        
+    def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
+        """
+        Trains self for the given number of training_steps, returning the given
+        number of training and external trajectories.
+        
+        Args:
+            learn_timesteps (int): How many steps to train for.
+            n_train (int): Number of training trajectories to generate.
+            n_external (int): Number of external trajectories to generate.
+            T_max (int): Maximal number of steps in a trajectory.
+            seed (int): Optional random seed for reproducibility.
+        Returns:
+            Tuple[List[Tuple], List[Tuple]]: Training and external trajectories,
+                respectively.
+        """
+        trajectories = self.data_oracle.generate_trajectories(n_train + n_external, T_max, seed)
+        
+        train_trajectories = trajectories[:n_train]
+        external_trajectories = trajectories[n_train:]
+        
+        if self.verbose:
+            print(f"Training on {len(train_trajectories)} trajectories for {training_steps} training steps")
+        
+        for traj in train_trajectories:
+            n = len(traj)
+            
+            for i in range(n):
+                if i == n - 1:
+                    done = True
+                else:
+                    done = False
+                
+                state = traj[i][0]
+                action = traj[i][1]
+                reward = traj[i][2]
+                next_state = traj[i][3]
+                
+                self.dqn.replay_buffer.add(
+                    np.array(state),
+                    np.array(next_state),
+                    np.array([action]),
+                    np.array([reward]),
+                    np.array([done]),
+                    [{}]
+                )
+        
+        self.dqn.learn(training_steps)
+        
+        if self.verbose:
+            print("Finished training")
+            
+        return train_trajectories, external_trajectories
+    
+class DeepOnlineTrainerOracle(DeepTrainerOracle):
+    """
+    A DQN-based trainer oracle with online learning.
+    """
+    
+    def __init__(self, config: DeepOnlineTrainerOracleConfig):
+        """
+        Initializes with given config info.
+        """
+        
+        from config import DeepTrainerOracleConfig
+        
+        super().__init__(DeepTrainerOracleConfig(
+            config.env,
+            config.alpha,
+            config.discount_factor,
+            config.verbose,
+            config.dqn
+        ))
+
+    def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
+        """
+        Trains self for the given number of training_steps, returning the given
+        number of training and external trajectories.
+        
+        Args:
+            learn_timesteps (int): How many steps to train for.
+            n_train (int): Number of training trajectories to generate.
+            n_external (int): Number of external trajectories to generate.
+            T_max (int): Maximal number of steps in a trajectory.
+            seed (int): Optional random seed for reproducibility.
+        Returns:
+            Tuple[List[Tuple], List[Tuple]]: Training and external trajectories,
+                respectively.
+        """
+        
+        train_trajectories = []
+        current_traj = []
+
+        # Custom callback to record transitions
+        class TrajectoryRecorder(BaseCallback):
+            def _on_step(self):
+                def format_value(val):
+                    if val.ndim == 1:
+                        return val[0]
+                    else:
+                        return val
+            
+                current_traj.append((
+                    format_value(self.locals['self']._last_obs),
+                    format_value(self.locals['actions']),
+                    format_value(self.locals['rewards']),
+                    format_value(self.locals['new_obs'])
+                ))
+                if self.locals['dones']:
+                    train_trajectories.append(current_traj.copy())
+                    current_traj.clear()
+                return True
+   
+        self.dqn.learn(total_timesteps=training_steps, callback=TrajectoryRecorder())
+        
+        # Gen external trajectories from policy
+        external_trajectories = self.generate_trajectories(n_external, T_max, seed)
+        
+        return train_trajectories[:n_train], external_trajectories

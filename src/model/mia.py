@@ -7,6 +7,7 @@ from sklearn.metrics import roc_curve
 from matplotlib import pyplot as plt
 
 from .trainer_oracle import TrainerOracle
+
 class MIAClassifier:
     """
     Learns an optimal threshold eta to distinguish training from external trajectory

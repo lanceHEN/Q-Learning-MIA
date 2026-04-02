@@ -1,5 +1,6 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, TYPE_CHECKING
 import random
 from collections import defaultdict, deque
 
@@ -7,7 +8,8 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3 import DQN
 
-from config import RandomDataOracleConfig, QLearnerDataOracleConfig, DQNDataOracleConfig
+if TYPE_CHECKING:
+    from config import RandomDataOracleConfig, QLearnerDataOracleConfig, DQNDataOracleConfig
 
 from .generic_model import GenericModel, QLearner
 
@@ -56,9 +58,8 @@ class QLearnerDataOracle(DataOracle):
         """
         super().__init__(config.env, config.verbose)
         
-        self.q_learner = QLearner(config.q_learner_config)
-        
-        self.train_timesteps = 0 # Keep track of training data to allow training multiple times.
+        self.q_learner = config.q_learner
+
         self.learning_starts = config.learning_starts
         
         self.decay_rate = config.decay_rate
@@ -102,14 +103,14 @@ class QLearnerDataOracle(DataOracle):
         
         done = False
     
-        for _ in range(learn_timesteps):
+        for train_timesteps in range(learn_timesteps):
             action = self._select_action_epsilon_greedy(self._encode_state(state))
             
             next_state, reward, done, _, _ = self.env.step(action)
             
             self.q_learner.replay_buffer.append((self._encode_state(state), action, reward, self._encode_state(next_state)))
             
-            if self.train_timesteps >= self.learning_starts:
+            if train_timesteps >= self.learning_starts:
                 batch = random.sample(self.q_learner.replay_buffer, self.q_learner.buffer_batch_size)
                 
                 for traj in batch:
@@ -119,7 +120,6 @@ class QLearnerDataOracle(DataOracle):
                 state, _ = self.env.reset()
                 done = False
                 
-            self.train_timesteps += 1
             self.q_learner.epsilon *= self.decay_rate
            
         if self.verbose: 
@@ -139,16 +139,7 @@ class DQNDataOracle(DataOracle):
         """
         super().__init__(config.env, config.verbose)
         
-        self.dqn = DQN(policy=config.dqn_config.policy,
-                       env=config.dqn_config.env,
-                       verbose=config.dqn_config.verbose,
-                       learning_rate=config.dqn_config.alpha,
-                       learning_starts=config.dqn_config.learning_starts,
-                       exploration_fraction=config.dqn_config.exploration_fraction,
-                       exploration_final_eps=config.dqn_config.exploration_final_eps,
-                       batch_size=config.dqn_config.batch_size,
-                       buffer_size=config.dqn_config.buffer_size,
-                       optimize_memory_usage=config.dqn_config.optimize_memory_usage)
+        self.dqn = config.dqn
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """

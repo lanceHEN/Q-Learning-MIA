@@ -1,4 +1,5 @@
-from typing import List, Tuple, Union, Dict
+from __future__ import annotations
+from typing import List, Tuple, Union, Dict, TYPE_CHECKING
 import random
 from collections import defaultdict, deque
 from abc import ABC, abstractmethod
@@ -6,7 +7,8 @@ from abc import ABC, abstractmethod
 import gymnasium as gym
 import numpy as np
 
-from config import QLearnerConfig
+if TYPE_CHECKING:
+    from config import QLearnerConfig
 
 class GenericModel(ABC):
     """

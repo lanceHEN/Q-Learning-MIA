@@ -1,5 +1,11 @@
-from .trainer_oracle import TrainerOracle, QLearnerTrainerOracle, DeepTrainerOracle
-from .data_oracle import RandomDataOracle, QLearnerDataOracle, DQNDataOracle
+from .trainer_oracle import (
+    TrainerOracle,
+    QLearnerTrainerOracle,
+    DeepTrainerOracle,
+    DeepOfflineTrainerOracle,
+    DeepOnlineTrainerOracle
+)
+from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle
 from .mia import MIAClassifier, SARSAMIA
 from .generic_model import QLearner
 
@@ -10,5 +16,8 @@ __all__ = [
     "MIAClassifier",
     "SARSAMIA",
     "QLearner",
-    "DQNDataOracle"
+    "DQNDataOracle",
+    "DataOracle",
+    "DeepOfflineTrainerOracle",
+    "DeepOnlineTrainerOracle"
 ]

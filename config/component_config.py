@@ -4,8 +4,10 @@ components in the MIA pipeline.
 """
 
 from dataclasses import dataclass, field
-
 import gymnasium as gym
+from stable_baselines3 import DQN
+
+from src.model import QLearner, DataOracle
 
 @dataclass
 class QLearnerConfig:
@@ -19,22 +21,6 @@ class QLearnerConfig:
     verbose: int = 0
     discount_factor: float = 0.999
     epsilon: float = 1
-    
-@dataclass
-class DQNConfig:
-    """
-    Stores config info for DQN implementations.
-    """
-    env: gym.Env
-    policy: str = "MlpPolicy"
-    verbose: int = 0
-    alpha: float = 0.0001
-    learning_starts: int = 10000
-    batch_size: int = 64
-    buffer_size: int = 50000
-    exploration_fraction: float = 0.3
-    exploration_final_eps: float = 0.05
-    optimize_memory_usage: bool = True
 
 @dataclass
 class DataOracleConfig:
@@ -56,14 +42,14 @@ class QLearnerDataOracleConfig(DataOracleConfig):
     """
     Stores config info for QLearnerDataOracle.
     """
-    q_learner_config: QLearnerConfig = field(default_factory=QLearnerConfig)
+    q_learner: QLearner = field(default_factory=QLearner)
     learning_starts: int = 1000
     decay_rate: float = 0.999
     random_seed: int = 1
 
 @dataclass
 class DQNDataOracleConfig(DataOracleConfig):
-    dqn_config: DQNConfig = field(default_factory=DQNConfig)
+    dqn: DQN = field(default_factory=DQN)
 
 @dataclass
 class TrainerOracleConfig:
@@ -77,11 +63,20 @@ class QLearnerTrainerOracleConfig(TrainerOracleConfig):
     """
     Stores config info for QLearnerTrainerOracle.
     """
-    q_learner_config: QLearnerConfig = field(default_factory=QLearnerConfig)
+    data_oracle: DataOracle = field(default_factory=DataOracle)
+    q_learner: QLearner = field(default_factory=QLearner)
 
 @dataclass
-class DQNTrainerOracleConfig(TrainerOracleConfig):
-    dqn_config: DQNConfig = field(default_factory=DQNConfig)
+class DeepTrainerOracleConfig(TrainerOracleConfig):
+    dqn: DQN = field(default_factory=DQN)
+    
+@dataclass
+class DeepOfflineTrainerOracleConfig(DeepTrainerOracleConfig):
+    data_oracle: DataOracle = field(default_factory=DataOracle)
+    
+@dataclass
+class DeepOnlineTrainerOracleConfig(DeepTrainerOracleConfig):
+    pass
 
 @dataclass
 class SARSAMIAConfig:

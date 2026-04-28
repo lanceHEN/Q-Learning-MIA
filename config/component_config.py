@@ -16,11 +16,12 @@ class QLearnerConfig:
     """
     env: gym.Env
     alpha: float = 0.0001
-    buffer_size: int = 10000
+    buffer_size: int = 100000
     buffer_batch_size: int = 32
     verbose: int = 0
     discount_factor: float = 0.999
     epsilon: float = 1
+    state_encoder: object = None
 
 @dataclass
 class DataOracleConfig:
@@ -29,6 +30,7 @@ class DataOracleConfig:
     """
     env: gym.Env
     verbose: int = 0
+    state_encoder: object = None
 
 @dataclass
 class RandomDataOracleConfig(DataOracleConfig):
@@ -57,6 +59,7 @@ class TrainerOracleConfig:
     alpha: float = 0.0001
     discount_factor: float = 0.999
     verbose: int = 0
+    state_encoder: object = None
     
 @dataclass
 class QLearnerTrainerOracleConfig(TrainerOracleConfig):

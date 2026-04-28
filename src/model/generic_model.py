@@ -15,26 +15,37 @@ class GenericModel(ABC):
     This is a class storing generic methods for an RL agent to use.
     """
     
-    def __init__(self, env: gym.Env, verbose: int=0):
+    def __init__(self, env: gym.Env, verbose: int=0, state_encoder=None):
         """
         Initializes a GenericModel with the given environment.
         
         Args:
             env (gym.Env): The environment to generate trajectories for.
             verbose (int): Whether to print status messages when running methods.
+            state_encoder: Optional function to encode state
         """
         self.env = env
         self.verbose = verbose
+        self.state_encoder = state_encoder
     
-    @staticmethod
-    def _encode_state(state: Union[int, np.ndarray]) -> Union[int, Tuple]:
+    def _encode_state(self, state: Union[int, np.ndarray, Dict]) -> Union[int, Tuple]:
         """
         Produces a hashable version of the raw state. If it's an int leaves it
         as-is. If it's a numpy array turns it into a tuple of the flattened
         version.
         """
+        if self.state_encoder is not None:
+            return self.state_encoder(state)
+        
         if isinstance(state, np.ndarray):
             return tuple(state.flatten())
+        elif isinstance(state, dict) and 'image' in state:
+            direction = state['direction']
+            positions = np.argwhere(state['image'][:,:,0] == 10)
+            if len(positions) == 0:
+                return (direction, -1, -1)
+            
+            return (direction,) + tuple(positions[0])
         else:
             return state
         
@@ -70,12 +81,12 @@ class GenericModel(ABC):
         t = 0
         while not done:
             # Get the action
-            action = self._select_action(GenericModel._encode_state(current_state))
+            action = self._select_action(self._encode_state(current_state))
 
             # Step through environment
             next_state, reward, done, _, _ = self.env.step(action)
 
-            traj.append((GenericModel._encode_state(current_state), action, reward, GenericModel._encode_state(next_state)))
+            traj.append((self._encode_state(current_state), action, reward, self._encode_state(next_state)))
 
             current_state = next_state
             
@@ -129,7 +140,7 @@ class QLearner(GenericModel):
         Args:
             config (QLearnerConfig): Config info.
         """
-        super().__init__(config.env, config.verbose)
+        super().__init__(config.env, config.verbose, config.state_encoder)
         
         self.q_table = defaultdict(lambda: defaultdict(float))
         self.alpha = config.alpha
@@ -143,7 +154,7 @@ class QLearner(GenericModel):
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
-        Selects an action for the given state.
+        Selects an action for the given state (greedy).
         
         Args:
             state (Union[int, Tuple]): State to produce an action for.
@@ -166,5 +177,6 @@ class QLearner(GenericModel):
         old_q = self.q_table[state][action]
         
         new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max(self.q_table[next_state].values(), default=0))
+
         
         self.q_table[state][action] = new_q

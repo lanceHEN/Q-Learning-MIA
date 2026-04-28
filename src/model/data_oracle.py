@@ -33,7 +33,7 @@ class RandomDataOracle(DataOracle):
             config (RandomDataOracleConfig): Config info for the
                 RandomDataOracle.
         """
-        super().__init__(config.env, config.verbose)
+        super().__init__(config.env, config.verbose, config.state_encoder)
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
@@ -56,7 +56,7 @@ class QLearnerDataOracle(DataOracle):
         """
         Initializes a QLearnerDataOracle with the given config info.
         """
-        super().__init__(config.env, config.verbose)
+        super().__init__(config.env, config.verbose, config.state_encoder)
         
         self.q_learner = config.q_learner
 
@@ -111,16 +111,16 @@ class QLearnerDataOracle(DataOracle):
             self.q_learner.replay_buffer.append((self._encode_state(state), action, reward, self._encode_state(next_state)))
             
             if train_timesteps >= self.learning_starts:
-                batch = random.sample(self.q_learner.replay_buffer, self.q_learner.buffer_batch_size)
-                
-                for traj in batch:
-                    self.q_learner._q_update(*traj)
+                transition = random.choice(self.q_learner.replay_buffer)
+                self.q_learner._q_update(*transition)
 
             if done:
                 state, _ = self.env.reset()
                 done = False
+            else:
+                state = next_state
                 
-            self.q_learner.epsilon *= self.decay_rate
+            self.q_learner.epsilon = self.q_learner.epsilon * self.decay_rate
            
         if self.verbose: 
             print("Finished training")
@@ -137,7 +137,7 @@ class DQNDataOracle(DataOracle):
         """
         Initializes a DQNDataOracle with the given config info.
         """
-        super().__init__(config.env, config.verbose)
+        super().__init__(config.env, config.verbose, config.state_encoder)
         
         self.dqn = config.dqn
         

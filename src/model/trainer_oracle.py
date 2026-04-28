@@ -30,7 +30,7 @@ class TrainerOracle(GenericModel):
         """
         Initializes a TrainerOracle with the given config.
         """
-        super().__init__(config.env, config.verbose)
+        super().__init__(config.env, config.verbose, config.state_encoder)
         
         self.alpha = config.alpha
         self.discount_factor = config.discount_factor
@@ -89,7 +89,8 @@ class QLearnerTrainerOracle(TrainerOracle):
             config.env,
             config.alpha,
             config.discount_factor,
-            config.verbose
+            config.verbose,
+            config.state_encoder
         ))
         
         self.data_oracle = config.data_oracle
@@ -127,11 +128,13 @@ class QLearnerTrainerOracle(TrainerOracle):
         
         for traj in train_trajectories:
             self.q_learner.replay_buffer.extend(traj)
+            
+        buffer_list = list(self.q_learner.replay_buffer)
     
         for train_timesteps in range(training_steps):
-            batch = random.sample(self.q_learner.replay_buffer, self.q_learner.buffer_batch_size)
-            for traj in batch:
-                self.q_learner._q_update(*traj)
+            transition = random.choice(buffer_list)
+            
+            self.q_learner._q_update(*transition)
         
         if self.verbose:
             print("Finished training")
@@ -171,7 +174,8 @@ class DeepTrainerOracle(TrainerOracle):
             config.env,
             config.alpha,
             config.discount_factor,
-            config.verbose
+            config.verbose,
+            config.state_encoder
         ))
         
         self.dqn = config.dqn
@@ -197,8 +201,6 @@ class DeepTrainerOracle(TrainerOracle):
         q_values = self._q_vals(state)
         
         return q_values[0, action].item()
-    
-        self.dqn.learn(training_steps)
         
     def optimal_state_val(self, state: Union[int, Tuple]) -> float:
         """
@@ -206,7 +208,7 @@ class DeepTrainerOracle(TrainerOracle):
         """
         q_values = self._q_vals(state)
             
-        return max(q_values[0])
+        return q_values[0].max().item()
     
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
@@ -243,7 +245,8 @@ class DeepOfflineTrainerOracle(DeepTrainerOracle):
             config.alpha,
             config.discount_factor,
             config.verbose,
-            config.dqn
+            config.dqn,
+            config.state_encoder
         ))
         
         self.data_oracle = config.data_oracle
@@ -318,7 +321,8 @@ class DeepOnlineTrainerOracle(DeepTrainerOracle):
             config.alpha,
             config.discount_factor,
             config.verbose,
-            config.dqn
+            config.dqn,
+            config.state_encoder
         ))
 
     def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
@@ -365,4 +369,4 @@ class DeepOnlineTrainerOracle(DeepTrainerOracle):
         # Gen external trajectories from policy
         external_trajectories = self.generate_trajectories(n_external, T_max, seed)
         
-        return train_trajectories[:n_train], external_trajectories
+        return train_trajectories[-n_train:], external_trajectories

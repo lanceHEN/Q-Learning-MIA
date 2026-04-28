@@ -3,8 +3,9 @@ from collections import defaultdict
 
 import numpy as np
 from scipy import stats
-from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_curve, auc
 from matplotlib import pyplot as plt
+from scipy.stats import gaussian_kde
 
 from .trainer_oracle import TrainerOracle
 
@@ -23,13 +24,12 @@ class MIAClassifier:
         Args:
             trainer_oracle (TrainerOracle): TrainerOracle to use for Bellman
                 residual calculations.
+            
         """
         self.trainer_oracle = trainer_oracle
         self.eta = None
-        self.a0 = None
-        self.b0 = None
-        self.a1 = None
-        self.b1 = None
+        self.kde0 = None
+        self.kde1 = None
     
     def _traj_membership_score(self, traj: List[Tuple]) -> float:
         """
@@ -51,6 +51,19 @@ class MIAClassifier:
             
         return s / len(traj)
     
+    def _log_likelihood_ratio(self, score):
+        # Score should be in log form.
+        p1 = max(float(self.kde1(score)), 1e-300)  # add floor
+        p0 = max(float(self.kde0(score)), 1e-300)
+        return np.log(p1) - np.log(p0)
+    
+    # Vectorized version
+    def _log_likelihood_ratios(self, scores):
+        # Scores should be in log form.
+        p1 = np.maximum(self.kde1(scores), 1e-300)
+        p0 = np.maximum(self.kde0(scores), 1e-300)
+        return np.log(p1) - np.log(p0)
+    
     def predict_membership(self, traj: List[Tuple]) -> int:
         """
         Predicts whether trajectory was used in training the model, returning
@@ -66,9 +79,9 @@ class MIAClassifier:
             int: 1 if predicted training, else 0.
         """
         score = self._traj_membership_score(traj)
-        ratio = stats.gamma.pdf(score, a=self.a1, scale=self.b1) / stats.gamma.pdf(score, a=self.a0, scale=self.b0) 
+        ratio = self._log_likelihood_ratio(np.log(score))
         
-        return int(ratio > self.eta)
+        return int(ratio > np.log(self.eta))
 
     def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
         """
@@ -85,7 +98,7 @@ class MIAClassifier:
         """
         return np.array([self.predict_membership(traj) for traj in trajs])
     
-    def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float) -> None:
+    def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float, experiment_name: str) -> None:
         """
         Given the training and external trajectories, learns their Gamma distributions
         and a threshold eta resulting in a likelihood ratio test with the given false positive rate.
@@ -95,41 +108,69 @@ class MIAClassifier:
                 of (state, action, reward, next_state) tuples.
             external_trajectories: List[List[Tuple]]:  List of external trajectories, each being a list
                 of (state, action, reward, next_state) tuples.
+            experiment_name (str): Name of experiment to save figures with.
         """
         # Distributions for train and external membership scores
         member_scores = np.array([self._traj_membership_score(traj) for traj in train_trajectories])
         nonmember_scores = np.array([self._traj_membership_score(traj) for traj in external_trajectories])
+
+        # For stability
+        member_scores = np.log(member_scores)
+        nonmember_scores = np.log(nonmember_scores)
+        
+        print(member_scores[:10])
+        print(nonmember_scores[:10])
+        
         all_scores = np.concatenate((nonmember_scores, member_scores))
         
-        # Get Gamma params for nonmember (H_0) dist
-        self.a0, _, self.b0 = stats.gamma.fit(nonmember_scores, floc=0)
+        # Get kde params for nonmember (H_0) dist
+        self.kde0 = gaussian_kde(nonmember_scores) # fit to log version
         
         # Same for member H_1
-        self.a1, _, self.b1 = stats.gamma.fit(member_scores, floc=0)
+        self.kde1 = gaussian_kde(member_scores)
+        
+        # Member vs nonmember sores
+        plt.figure()
+        plt.hist(member_scores, alpha=0.5, label='Member', bins=15, density=True)
+        plt.hist(nonmember_scores, alpha=0.5, label='Non-member', bins=30, density=True)
+
+        #plt.plot(x, stats.gamma.pdf(x, self.a0, scale=self.b0), label='Non-member fit')
+        #plt.plot(x, stats.gamma.pdf(x, self.a1, scale=self.b1), label='Member fit')
+        plt.xlabel("Log Membership Score")
+        plt.legend()
+        plt.savefig(f"data/plots/member_nonmember_scores/{experiment_name}_score_hist.png")
         
         # Use ROC to solve for eta
         labels = np.concatenate((np.zeros(len(external_trajectories)), np.ones(len(train_trajectories))))
         
-        lr_scores = stats.gamma.pdf(all_scores, a=self.a1, scale=self.b1) / stats.gamma.pdf(all_scores, a=self.a0, scale=self.b0)
+        # Necessary for numerical stability
+        log_lr_scores = self._log_likelihood_ratios(all_scores)
         
-        fp_rates, _, thresholds = roc_curve(labels, lr_scores)
+        #valid = np.isfinite(lr_scores)
+        #lr_scores = lr_scores[valid]
+        #labels = labels[valid]
+        
+        fp_rates, _, thresholds = roc_curve(labels, log_lr_scores)
     
         threshold_idx = np.argmin(abs(fp_rates - fp_rate))
-        self.eta = thresholds[threshold_idx]
+        self.eta = np.exp(thresholds[threshold_idx])
         
         # Prints learned params
         
         # print(self.a0, self.b0, self.a1, self.b1)
         
-        # Plots learned dists on top one another
-        # xp = np.linspace(0,np.max(member_scores))
-        # yp0 = stats.gamma.pdf(xp, a=self.a0, scale=self.b0)
-        # yp1 = stats.gamma.pdf(xp, a=self.a1, scale=self.b1)
-        # plt.plot(xp, yp0, color="red", label="p0")
-        # plt.plot(xp, yp1, color="blue", label="p1")
-        # plt.axvline(x=self.eta, color="black", label="eta")
-        # plt.legend()
-        # plt.show()
+        # negate because lower score = more likely member
+        fpr, tpr, thresholds = roc_curve(labels, -np.array(all_scores))
+        roc_auc = auc(fpr, tpr)
+
+        # ROC curve
+        plt.figure()
+        plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
+        plt.plot([0,1], [0,1], 'k--', label='random')
+        plt.xlabel("FP Rate")
+        plt.ylabel("TP Rate (Recall)")
+        plt.legend()
+        plt.savefig(f"data/plots/roc_curves/{experiment_name}_roc_curve.png")
         
 class SARSAMIA(MIAClassifier):
     

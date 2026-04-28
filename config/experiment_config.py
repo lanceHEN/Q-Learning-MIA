@@ -18,6 +18,7 @@ class ExperimentRunnerConfig:
     """
     Stores config info for ExperimentRunner.
     """
+    experiment_name: str
     env: gym.Env
     trainer_oracle: TrainerOracle
     mia_classifier: MIAClassifier

@@ -12,8 +12,9 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 import pandas as pd
 import ale_py
 from stable_baselines3 import DQN
-
-
+from stable_baselines3.common.atari_wrappers import AtariWrapper
+import minigrid
+from minigrid.wrappers import FlatObsWrapper
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -25,7 +26,8 @@ from config import (
     SARSAMIAConfig,
     QLearnerConfig,
     DQNDataOracleConfig,
-    DeepOnlineTrainerOracleConfig
+    DeepOnlineTrainerOracleConfig,
+    DeepOfflineTrainerOracleConfig
 )
 
 src_dir = Path(__file__).parent.parent
@@ -38,7 +40,8 @@ from model import (
     SARSAMIA,
     QLearner,
     DQNDataOracle,
-    DeepOnlineTrainerOracle
+    DeepOnlineTrainerOracle,
+    DeepOfflineTrainerOracle
 )
 
 class ExperimentRunner:
@@ -52,6 +55,7 @@ class ExperimentRunner:
         """
         Initializes an ExperimentRunner with the given config.
         """
+        self.experiment_name = config.experiment_name
         self.env = config.env
         self.trainer_oracle = config.trainer_oracle
         self.mia_classifier = config.mia_classifier
@@ -74,6 +78,21 @@ class ExperimentRunner:
         # Learn
         train_trajectories, external_trajectories = self.trainer_oracle.train(self.trainer_oracle_train_timesteps, n_train, n_external, self.T_max, self.seed)
         
+        member_sa = set((s, a) for traj in train_trajectories 
+                for s, a, _, _ in traj)
+
+        nonmember_sa = set((s, a) for traj in external_trajectories 
+                   for s, a, _, _ in traj)
+        
+        # Overlap
+        overlap = member_sa & nonmember_sa
+        print(f"Member (s,a) pairs: {len(member_sa)}")
+        print(f"Non-member (s,a) pairs: {len(nonmember_sa)}")
+        print(f"Overlap: {len(overlap)}")
+        print(f"Overlap %: {len(overlap)/len(nonmember_sa)*100:.1f}%")
+        
+        #external_trajectories = self.trainer_oracle.data_oracle.generate_trajectories(n_external, self.T_max, self.seed)
+        
         # Train/test split for train/external
         train_trajectories_fit = train_trajectories[:round(self.mia_train_test_split * n_train)]
         train_trajectories_nonfit = train_trajectories[round(self.mia_train_test_split * n_train):]
@@ -88,20 +107,31 @@ class ExperimentRunner:
                                 train_trajectories_nonfit,
                                 external_trajectories_fit,
                                 external_trajectories_nonfit,
-                                fp_rate):
+                                fp_rate,
+                                experiment_name):
         """
         Runs rest of experiment, training the MIA classifier for some fp rate.
         """
         #print(train_trajectories_fit)
         #print(external_trajectories_fit)
         
-        self.mia_classifier.fit(train_trajectories_fit, external_trajectories_fit, fp_rate=fp_rate)
+        self.mia_classifier.fit(train_trajectories_fit, external_trajectories_fit, fp_rate=fp_rate, experiment_name=experiment_name)
 
         # print(f"Learned eta: {mia_classifier.eta}")
 
         # Get predictions on trajs not used to fit
         train_predictions = self.mia_classifier.predict_memberships(train_trajectories_nonfit)
         external_predictions = self.mia_classifier.predict_memberships(external_trajectories_nonfit)
+        
+        member_scores = np.array([self.mia_classifier._traj_membership_score(traj) for traj in train_trajectories_nonfit])
+        nonmember_scores = np.array([self.mia_classifier._traj_membership_score(traj) for traj in external_trajectories_nonfit])
+        
+        plt.figure()
+        plt.hist(member_scores, alpha=0.5, label='Member', bins=15, density=True)
+        plt.hist(nonmember_scores, alpha=0.5, label='Non-member', bins=30, density=True)
+        plt.xlabel("Membership Score")
+        plt.legend()
+        plt.savefig(f"data/plots/test_member_nonmember_scores/{experiment_name}_score_hist.png")
         
         preds = np.concatenate((train_predictions, external_predictions))
         
@@ -125,7 +155,8 @@ class ExperimentRunner:
                                             train_trajectories_nonfit,
                                             external_trajectories_fit,
                                             external_trajectories_nonfit,
-                                            self.fp_rate)      
+                                            self.fp_rate,
+                                            self.experiment_name)      
     
 
 def test_fp_rates(experiment_runner: ExperimentRunner, fp_rate_list: List[float] = [0.05,0.1,0.15,0.2,0.25]) -> pd.DataFrame:
@@ -142,7 +173,8 @@ def test_fp_rates(experiment_runner: ExperimentRunner, fp_rate_list: List[float]
                                             train_trajectories_nonfit,
                                             external_trajectories_fit,
                                             external_trajectories_nonfit,
-                                            fp_rate)    
+                                            fp_rate,
+                                            f"{experiment_runner.experiment_name}_fp_rate_{fp_rate}")    
             
         accuracies.append(accuracy)
         precisions.append(precision)
@@ -177,15 +209,18 @@ def test_hyperparams(experiment_config: ExperimentRunnerConfig,
     precisions = []
     recalls = []
     etas = []
+    
+    original_experiment_name = experiment_config.experiment_name
 
     for n_trajectories in n_trajectories_list:
         for train_external_split in train_external_split_list:
             for trainer_oracle_train_timesteps in trainer_oracle_train_timesteps_list:
                 for fp_rate in fp_rate_list:
                     experiment_config.n_trajectories = n_trajectories
-                    experiment_config.train_external_split_list = train_external_split
+                    experiment_config.train_external_split = train_external_split
                     experiment_config.trainer_oracle_train_timesteps = trainer_oracle_train_timesteps
                     experiment_config.fp_rate = fp_rate
+                    experiment_config.experiment_name = f"{original_experiment_name}_({n_trajectories},{train_external_split},{trainer_oracle_train_timesteps},{fp_rate})"  
                     
                     experiment_runner = ExperimentRunner(experiment_config)
     
@@ -210,29 +245,89 @@ def test_hyperparams(experiment_config: ExperimentRunnerConfig,
         "Precision":precisions,
         "Recall":recalls,
         "Eta":etas
-    })  
-        
+    })
+
 def main():
-    
-    gym.register_envs(ale_py)
-    env = gym.make("ALE/Pong-ram-v5")
-    T_max = float('inf')
+    env = gym.make("Acrobot-v1")
+    T_max = 500
     verbose = 1
     seed = 1
+    experiment_name = "acrobot"
+    alpha = 0.1
     
+    n_bins = 4
+
+    bins = [
+        np.linspace(-1, 1, n_bins),
+        np.linspace(-1, 1, n_bins),
+        np.linspace(-1, 1, n_bins),
+        np.linspace(-1, 1, n_bins),
+        np.linspace(-12.566371, 12.566371, n_bins),
+        np.linspace(-28.274334, 28.274334, n_bins),
+    ]
+
+    def encode_acrobot(state):
+        return tuple(int(np.digitize(state[i], bins[i])) for i in range(6))
+    
+
     # Construct data oracle
+    
+    '''
+    data_oracle = DQNDataOracle(
+        DQNDataOracleConfig(
+            env=env,
+            dqn=DQN(policy="MlpPolicy",
+                       env=env,
+                       verbose=verbose,
+                       learning_rate=0.00005,
+                       learning_starts=1000,
+                       exploration_fraction=0.7,
+                       exploration_final_eps=0.05,
+                       batch_size=64,
+                       buffer_size=50000
+            )
+        )
+    )
+    data_oracle.train(learn_timesteps=1000000)
+    
+    
+    
+    data_oracle.dqn.save("models/acrobot_data_oracle_dqn")
+    
+    data_oracle = DQNDataOracle(
+        DQNDataOracleConfig(
+            env=env,
+            dqn=DQN.load("models/acrobot_data_oracle_dqn", env=env)
+        )
+    )
+    
+    
     '''
     data_oracle = QLearnerDataOracle(
         QLearnerDataOracleConfig(
             env=env,
             q_learner=QLearner(QLearnerConfig(
-                env=env
-            ))
+                env=env,
+                alpha=0.1,
+                buffer_size=1,
+                epsilon=1,
+                state_encoder=encode_acrobot
+            )),
+            decay_rate=0.99995
         )
     )
     
     # Train for some timesteps
-    data_oracle.train(10000)
+    data_oracle.train(20000000)
+    
+    
+    # Evaluate
+    trajs = data_oracle.generate_trajectories(100, T_max=T_max)
+    totals = []
+    for traj in trajs:
+        totals.append(sum(t[2] for t in traj))
+        
+    print(f"Mean reward: {np.mean(totals):.2f}")
     
     
     trainer_oracle = QLearnerTrainerOracle(
@@ -240,52 +335,75 @@ def main():
             env=env,
             data_oracle=data_oracle,
             q_learner=QLearner(QLearnerConfig(
-                env=env
-            ))
+                env=env,
+                alpha=alpha,
+                buffer_size=1000000000,
+                state_encoder=encode_acrobot
+            )),
+            alpha=alpha
         )
     )
-    '''
+    #
     
+    '''
     # Use deep trainer oracle
-    trainer_oracle = DeepOnlineTrainerOracle(
-        DeepOnlineTrainerOracleConfig(
+    
+    trainer_oracle = DeepOfflineTrainerOracle(
+        DeepOfflineTrainerOracleConfig(
             env=env,
+            alpha=alpha,
             dqn=DQN(policy="MlpPolicy",
                        env=env,
                        verbose=verbose,
-                       learning_rate=0.0001,
-                       learning_starts=1000,
-                       exploration_fraction=0.3,
-                       exploration_final_eps=0.05,
-                       batch_size=64,
-                       buffer_size=50000,
-                       optimize_memory_usage=False)
+                       learning_rate=0.0005,
+                       learning_starts=0,
+                       exploration_fraction=0,
+                       exploration_final_eps=0,
+                       batch_size=32,
+                       buffer_size=10000000),
+            data_oracle=data_oracle
         )
     )
+    '''
     
     mia_classifier = MIAClassifier(
         trainer_oracle
     )
     
     experiment_config = ExperimentRunnerConfig(
+        experiment_name=experiment_name,
         env=env,
         trainer_oracle=trainer_oracle,
         mia_classifier=mia_classifier,
         T_max=T_max,
         seed=seed,
-        n_trajectories=500,
+        n_trajectories=250,
         train_external_split=0.5,
-        trainer_oracle_train_timesteps=2000000,
-        fp_rate=0.05,
-        mia_train_test_split=0.8
+        trainer_oracle_train_timesteps=200000,
+        fp_rate=0.25,
+        mia_train_test_split=0.5
     )
     
-    experiment_runner = ExperimentRunner(experiment_config)
-
-    table = test_fp_rates(experiment_runner, fp_rate_list = [.05])
-    table.to_csv("data/tables/hyperparam_results_taxi_dqn_test.csv")
+    
+    table = test_hyperparams(experiment_config, n_trajectories_list=[100], trainer_oracle_train_timesteps_list=[200000], fp_rate_list=[0.25])
+    
+    #experiment_runner = ExperimentRunner(experiment_config)
+    #table = test_fp_rates(
+    #    experiment_runner,
+    #    fp_rate_list=[0.1,0.2,0.3,0.4]
+    #)
+    
+    table.to_csv("data/tables/hyperparam_results_acrobot.csv")
     
     print(table)
+    
+    # Plot metrics vs fp rates
+    plt.figure()
+    plt.plot(table["FP Rate"], table["Accuracy"], label='Accuracy')
+    plt.plot(table["FP Rate"], table["Precision"], label='Precision')
+    plt.plot(table["FP Rate"], table["Recall"], label='Recall')
+    plt.xlabel("FP Rate")
+    plt.savefig(f"data/plots/fp_rates/{experiment_name}_fp_rates_plot.png")
     
 if __name__ == "__main__":
     main()

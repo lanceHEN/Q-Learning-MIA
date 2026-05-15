@@ -64,6 +64,8 @@ class QLearnerDataOracle(DataOracle):
         
         self.decay_rate = config.decay_rate
         
+        self.state_encoder = config.state_encoder
+        
         random.seed(config.random_seed)
     
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:

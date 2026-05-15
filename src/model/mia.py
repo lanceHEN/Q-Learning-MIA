@@ -52,14 +52,12 @@ class MIAClassifier:
         return s / len(traj)
     
     def _log_likelihood_ratio(self, score):
-        # Score should be in log form.
         p1 = max(float(self.kde1(score)), 1e-300)  # add floor
         p0 = max(float(self.kde0(score)), 1e-300)
         return np.log(p1) - np.log(p0)
     
     # Vectorized version
     def _log_likelihood_ratios(self, scores):
-        # Scores should be in log form.
         p1 = np.maximum(self.kde1(scores), 1e-300)
         p0 = np.maximum(self.kde0(scores), 1e-300)
         return np.log(p1) - np.log(p0)
@@ -79,9 +77,9 @@ class MIAClassifier:
             int: 1 if predicted training, else 0.
         """
         score = self._traj_membership_score(traj)
-        ratio = self._log_likelihood_ratio(np.log(score))
+        ratio = self._log_likelihood_ratio(score)
         
-        return int(ratio > np.log(self.eta))
+        return int(ratio > self.eta)
 
     def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
         """
@@ -113,32 +111,46 @@ class MIAClassifier:
         # Distributions for train and external membership scores
         member_scores = np.array([self._traj_membership_score(traj) for traj in train_trajectories])
         nonmember_scores = np.array([self._traj_membership_score(traj) for traj in external_trajectories])
-
-        # For stability
-        member_scores = np.log(member_scores)
-        nonmember_scores = np.log(nonmember_scores)
         
-        print(member_scores[:10])
-        print(nonmember_scores[:10])
+        print(f"Member mean: {np.mean(member_scores):.6f}")
+        print(f"Non-member mean: {np.mean(nonmember_scores):.6f}")
+        print(f"Member max: {np.max(member_scores):.6f}")
+        print(f"Non-member max: {np.max(nonmember_scores):.6f}")
+        
+        # For stability
+        #member_scores = np.log(member_scores)
+        #nonmember_scores = np.log(nonmember_scores)
+        
+        #print(member_scores[:10])
+        #print(nonmember_scores[:10])
         
         all_scores = np.concatenate((nonmember_scores, member_scores))
         
         # Get kde params for nonmember (H_0) dist
-        self.kde0 = gaussian_kde(nonmember_scores) # fit to log version
+        self.kde0 = gaussian_kde(nonmember_scores)
         
         # Same for member H_1
         self.kde1 = gaussian_kde(member_scores)
         
         # Member vs nonmember sores
-        plt.figure()
-        plt.hist(member_scores, alpha=0.5, label='Member', bins=15, density=True)
-        plt.hist(nonmember_scores, alpha=0.5, label='Non-member', bins=30, density=True)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 8))
 
-        #plt.plot(x, stats.gamma.pdf(x, self.a0, scale=self.b0), label='Non-member fit')
-        #plt.plot(x, stats.gamma.pdf(x, self.a1, scale=self.b1), label='Member fit')
-        plt.xlabel("Log Membership Score")
-        plt.legend()
-        plt.savefig(f"data/plots/member_nonmember_scores/{experiment_name}_score_hist.png")
+        bins = np.linspace(
+            min(np.min(member_scores + 1e-30), np.min(nonmember_scores + 1e-30)),
+            max(np.max(member_scores + 1e-30), np.max(nonmember_scores + 1e-30)),
+            30
+        )
+
+        ax1.hist(member_scores + 1e-30, bins=bins, color='blue', alpha=0.7)
+        ax1.set_title('Member')
+        ax1.set_xlabel('Membership Score')
+
+        ax2.hist(nonmember_scores + 1e-30, bins=bins, color='orange', alpha=0.7)
+        ax2.set_title('Non-member')
+        ax2.set_xlabel('Membership Score')
+
+        plt.tight_layout()
+        plt.savefig(f"data/plots/member_nonmember_scores/{experiment_name}_score_hist.png")     
         
         # Use ROC to solve for eta
         labels = np.concatenate((np.zeros(len(external_trajectories)), np.ones(len(train_trajectories))))
@@ -153,7 +165,7 @@ class MIAClassifier:
         fp_rates, _, thresholds = roc_curve(labels, log_lr_scores)
     
         threshold_idx = np.argmin(abs(fp_rates - fp_rate))
-        self.eta = np.exp(thresholds[threshold_idx])
+        self.eta = thresholds[threshold_idx]
         
         # Prints learned params
         
@@ -171,6 +183,7 @@ class MIAClassifier:
         plt.ylabel("TP Rate (Recall)")
         plt.legend()
         plt.savefig(f"data/plots/roc_curves/{experiment_name}_roc_curve.png")
+        plt.close('all')
         
 class SARSAMIA(MIAClassifier):
     

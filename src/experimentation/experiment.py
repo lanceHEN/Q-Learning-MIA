@@ -14,7 +14,8 @@ import ale_py
 from stable_baselines3 import DQN
 from stable_baselines3.common.atari_wrappers import AtariWrapper
 import minigrid
-from minigrid.wrappers import FlatObsWrapper
+from minigrid.wrappers import FullyObsWrapper
+from collections import Counter
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -42,6 +43,10 @@ from model import (
     DQNDataOracle,
     DeepOnlineTrainerOracle,
     DeepOfflineTrainerOracle
+)
+
+from envs import (
+    GridWorld
 )
 
 class ExperimentRunner:
@@ -85,11 +90,29 @@ class ExperimentRunner:
                    for s, a, _, _ in traj)
         
         # Overlap
-        overlap = member_sa & nonmember_sa
-        print(f"Member (s,a) pairs: {len(member_sa)}")
-        print(f"Non-member (s,a) pairs: {len(nonmember_sa)}")
-        print(f"Overlap: {len(overlap)}")
-        print(f"Overlap %: {len(overlap)/len(nonmember_sa)*100:.1f}%")
+        # Count frequency of each (s,a) pair
+        member_sa_counts = Counter(
+            (s, a) for traj in train_trajectories 
+            for s, a, _, _ in traj
+        )
+
+        nonmember_sa_counts = Counter(
+            (s, a) for traj in external_trajectories 
+            for s, a, _, _ in traj
+        )
+
+        # Total visits
+        total_member = sum(member_sa_counts.values())
+        total_nonmember = sum(nonmember_sa_counts.values())
+
+        # Weighted overlap
+        overlap_pairs = set(member_sa_counts.keys()) & set(nonmember_sa_counts.keys())
+
+        # Fraction of non-member visits that are to overlapping states
+        weighted_overlap = sum(nonmember_sa_counts[sa] for sa in overlap_pairs)
+        print(f"Weighted overlap: {weighted_overlap/total_nonmember*100:.1f}%")
+        print(f"Member unique (s,a) pairs: {len(member_sa_counts.keys())}")
+        print(f"Nonmember unique (s,a) pairs: {len(nonmember_sa_counts.keys())}")
         
         #external_trajectories = self.trainer_oracle.data_oracle.generate_trajectories(n_external, self.T_max, self.seed)
         
@@ -127,8 +150,8 @@ class ExperimentRunner:
         nonmember_scores = np.array([self.mia_classifier._traj_membership_score(traj) for traj in external_trajectories_nonfit])
         
         plt.figure()
-        plt.hist(member_scores, alpha=0.5, label='Member', bins=15, density=True)
-        plt.hist(nonmember_scores, alpha=0.5, label='Non-member', bins=30, density=True)
+        plt.hist(member_scores, alpha=0.5, label='Member', density=False)
+        plt.hist(nonmember_scores, alpha=0.5, label='Non-member', density=False)
         plt.xlabel("Membership Score")
         plt.legend()
         plt.savefig(f"data/plots/test_member_nonmember_scores/{experiment_name}_score_hist.png")
@@ -248,28 +271,18 @@ def test_hyperparams(experiment_config: ExperimentRunnerConfig,
     })
 
 def main():
-    env = gym.make("Acrobot-v1")
+    gym.register(
+        id='GridWorld-v0',
+        entry_point=GridWorld,
+        kwargs={'size': 30, 'slip_prob': 0}
+    )
+    env = gym.make('Taxi-v3')
     T_max = 500
     verbose = 1
     seed = 1
-    experiment_name = "acrobot"
-    alpha = 0.1
+    experiment_name = "taxi_dumb_data_oracle_alpha_001"
+    alpha = 0.001
     
-    n_bins = 4
-
-    bins = [
-        np.linspace(-1, 1, n_bins),
-        np.linspace(-1, 1, n_bins),
-        np.linspace(-1, 1, n_bins),
-        np.linspace(-1, 1, n_bins),
-        np.linspace(-12.566371, 12.566371, n_bins),
-        np.linspace(-28.274334, 28.274334, n_bins),
-    ]
-
-    def encode_acrobot(state):
-        return tuple(int(np.digitize(state[i], bins[i])) for i in range(6))
-    
-
     # Construct data oracle
     
     '''
@@ -310,24 +323,41 @@ def main():
                 env=env,
                 alpha=0.1,
                 buffer_size=1,
-                epsilon=1,
-                state_encoder=encode_acrobot
+                epsilon=1
             )),
             decay_rate=0.99995
         )
     )
     
     # Train for some timesteps
-    data_oracle.train(20000000)
+    data_oracle.train(100000)
     
+    
+    all_vals = [v for state in data_oracle.q_learner.q_table.values() 
+            for v in state.values()]
+    print(f"Q-table size: {len(all_vals)}")
+    print(f"Max Q: {max(all_vals) if all_vals else 0:.4f}")
+    print(f"Min Q: {min(all_vals) if all_vals else 0:.4f}")
+    print(f"Final epsilon: {data_oracle.q_learner.epsilon:.6f}")
     
     # Evaluate
-    trajs = data_oracle.generate_trajectories(100, T_max=T_max)
-    totals = []
-    for traj in trajs:
-        totals.append(sum(t[2] for t in traj))
-        
-    print(f"Mean reward: {np.mean(totals):.2f}")
+    rewards = []
+    for _ in range(100):
+        obs, _ = env.reset()
+        done = False
+        total = 0
+        t = 0
+        while not done:
+            action = data_oracle.q_learner._select_action(
+                data_oracle._encode_state(obs))
+            obs, reward, terminated, truncated, _ = env.step(action)
+            total += reward
+            done = terminated or truncated
+            t += 1
+            if t == T_max:
+                break
+        rewards.append(total)
+    print(f"Mean reward: {np.mean(rewards):.4f}")
     
     
     trainer_oracle = QLearnerTrainerOracle(
@@ -337,8 +367,7 @@ def main():
             q_learner=QLearner(QLearnerConfig(
                 env=env,
                 alpha=alpha,
-                buffer_size=1000000000,
-                state_encoder=encode_acrobot
+                buffer_size=1000000000
             )),
             alpha=alpha
         )
@@ -385,7 +414,7 @@ def main():
     )
     
     
-    table = test_hyperparams(experiment_config, n_trajectories_list=[100], trainer_oracle_train_timesteps_list=[200000], fp_rate_list=[0.25])
+    table = test_hyperparams(experiment_config, n_trajectories_list=[250], trainer_oracle_train_timesteps_list=[60000000,70000000,80000000,90000000,100000000], fp_rate_list=[0.25])
     
     #experiment_runner = ExperimentRunner(experiment_config)
     #table = test_fp_rates(
@@ -393,7 +422,7 @@ def main():
     #    fp_rate_list=[0.1,0.2,0.3,0.4]
     #)
     
-    table.to_csv("data/tables/hyperparam_results_acrobot.csv")
+    table.to_csv("data/tables/hyperparam_results_gridworld.csv")
     
     print(table)
     

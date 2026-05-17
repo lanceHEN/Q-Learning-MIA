@@ -6,6 +6,7 @@ components in the MIA pipeline.
 from dataclasses import dataclass, field
 import gymnasium as gym
 from stable_baselines3 import DQN
+from typing import Callable, Union, Tuple
 
 from src.model import QLearner, DataOracle
 
@@ -38,6 +39,14 @@ class RandomDataOracleConfig(DataOracleConfig):
     Stores config info for RandomDataOracle.
     """
     pass
+
+@dataclass
+class CustomFixedPolicyDataOracleConfig(Da):
+    """
+    Stores config info for CustomFixedPolicyDataOracle.
+    """
+    action_selector: Callable[[Union[int, Tuple]], Union[int, Tuple]]
+    
 
 @dataclass
 class QLearnerDataOracleConfig(DataOracleConfig):

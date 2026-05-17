@@ -9,7 +9,11 @@ import numpy as np
 from stable_baselines3 import DQN
 
 if TYPE_CHECKING:
-    from config import RandomDataOracleConfig, QLearnerDataOracleConfig, DQNDataOracleConfig
+    from config import (
+        RandomDataOracleConfig,
+                        QLearnerDataOracleConfig,
+                        DQNDataOracleConfig,
+                        CustomFixedPolicyDataOracleConfig)
 
 from .generic_model import GenericModel, QLearner
 
@@ -46,6 +50,36 @@ class RandomDataOracle(DataOracle):
             Union[int, Tuple]: Action for given state.
         """
         return self.env.action_space.sample()
+    
+class CustomFixedPolicyDataOracle(DataOracle):
+    """
+    A Data Oracle implementation using a fixed policy function which is given on
+    construction.
+    """
+    
+    def __init__(self, config: CustomFixedPolicyDataOracleConfig):
+        """
+        Initializes a CustomFixedPolicyDataOracle with the given config.
+        
+        Args:
+            config (CustomFixedPolicyDataOracleConfig): Config info for the
+                CustomFixedPolicyDataOracle.
+        """
+        super().__init__(config.env, config.verbose, config.state_encoder)
+        
+        self.action_selector = config.action_selector
+        
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
+        """
+        Selects action for given state according to the custom policy.]
+        
+        Args:
+            state (Union[int, Tuple]): State to produce an action for.
+            
+        Returns:
+            Union[int, Tuple]: Action for given state.
+        """
+        return self.action_selector(state)
     
 class QLearnerDataOracle(DataOracle):
     """

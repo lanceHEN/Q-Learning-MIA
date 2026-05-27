@@ -63,6 +63,12 @@ class GenericModel(ABC):
         """
         pass
     
+    def reset(self):
+        """
+        Resets internal state back to its initial values.
+        """
+        pass
+    
     def _gen_trajectory(self, T_max: int) -> List[Tuple]:
         """
         Returns a trajectory with no more than T_max transitions.
@@ -142,15 +148,20 @@ class QLearner(GenericModel):
         """
         super().__init__(config.env, config.verbose, config.state_encoder)
         
-        self.q_table = defaultdict(lambda: defaultdict(float))
         self.alpha = config.alpha
         
-        self.replay_buffer = deque(maxlen=config.buffer_size)
-        self.buffer_batch_size = config.buffer_batch_size
+        self.config = config
+        self.reset()
         
-        self.discount_factor = config.discount_factor
+    def reset(self):
+        self.q_table = defaultdict(lambda: defaultdict(float))
+        self.replay_buffer = deque(maxlen=self.config.buffer_size)
+        self.buffer_batch_size = self.config.buffer_batch_size
         
-        self.epsilon = config.epsilon
+        self.discount_factor = self.config.discount_factor
+        
+        self.epsilon = self.config.epsilon
+        
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """

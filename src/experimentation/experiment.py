@@ -28,7 +28,8 @@ from config import (
     QLearnerConfig,
     DQNDataOracleConfig,
     DeepOnlineTrainerOracleConfig,
-    DeepOfflineTrainerOracleConfig
+    DeepOfflineTrainerOracleConfig,
+    CustomFixedPolicyDataOracleConfig
 )
 
 src_dir = Path(__file__).parent.parent
@@ -42,7 +43,8 @@ from model import (
     QLearner,
     DQNDataOracle,
     DeepOnlineTrainerOracle,
-    DeepOfflineTrainerOracle
+    DeepOfflineTrainerOracle,
+    CustomFixedPolicyDataOracle
 )
 
 from envs import (
@@ -239,6 +241,7 @@ def test_hyperparams(experiment_config: ExperimentRunnerConfig,
         for train_external_split in train_external_split_list:
             for trainer_oracle_train_timesteps in trainer_oracle_train_timesteps_list:
                 for fp_rate in fp_rate_list:
+                    experiment_config.trainer_oracle.reset()
                     experiment_config.n_trajectories = n_trajectories
                     experiment_config.train_external_split = train_external_split
                     experiment_config.trainer_oracle_train_timesteps = trainer_oracle_train_timesteps
@@ -276,12 +279,13 @@ def main():
         entry_point=GridWorld,
         kwargs={'size': 30, 'slip_prob': 0}
     )
-    env = gym.make('Taxi-v3')
+    env = gym.make("Taxi-v3")
     T_max = 500
     verbose = 1
     seed = 1
-    experiment_name = "taxi_dumb_data_oracle_alpha_001"
+    experiment_name = "taxi_qlearner_data_oracle_alpha_001"
     alpha = 0.001
+
     
     # Construct data oracle
     
@@ -330,15 +334,71 @@ def main():
     )
     
     # Train for some timesteps
-    data_oracle.train(100000)
+    data_oracle.train(500000)
+    '''
+    LOCS = [(0,0), (0,4), (4,0), (4,3)]  # R, G, Y, B
+
+    def decode_state(state):
+        dest = state % 4;        state //= 4
+        pass_loc = state % 5;    state //= 5
+        taxi_col = state % 5;    state //= 5
+        taxi_row = state
+        return taxi_row, taxi_col, pass_loc, dest
     
+    WALLS = {
+        # (row, col, direction) where direction is East(2) or West(3)
+        (0, 1, 2),  # row 0, can't go East from col 1
+        (0, 2, 3),  # row 0, can't go West from col 2
+        (1, 1, 2),  # row 1, can't go East from col 1
+        (1, 2, 3),  # row 1, can't go West from col 2
+        (3, 0, 2),  # row 3, can't go East from col 0
+        (3, 1, 3),  # row 3, can't go West from col 1
+        (4, 0, 2),  # row 4, can't go East from col 0
+        (4, 1, 3),  # row 4, can't go West from col 1
+        (3, 2, 2),  # row 3, can't go East from col 2
+        (3, 3, 3),  # row 3, can't go West from col 3
+        (4, 2, 2),  # row 4, can't go East from col 2
+        (4, 3, 3),  # row 4, can't go West from col 3
+    }
+
+    MOVES = {0: (1,0), 1: (-1,0), 2: (0,1), 3: (0,-1)}  # S,N,E,W
+
+    def bfs(start, target):
+        """Returns first action to take from start to reach target."""
+        from collections import deque
+        
+        if start == target:
+            return None
     
-    all_vals = [v for state in data_oracle.q_learner.q_table.values() 
-            for v in state.values()]
-    print(f"Q-table size: {len(all_vals)}")
-    print(f"Max Q: {max(all_vals) if all_vals else 0:.4f}")
-    print(f"Min Q: {min(all_vals) if all_vals else 0:.4f}")
-    print(f"Final epsilon: {data_oracle.q_learner.epsilon:.6f}")
+        queue = deque([(start, [])])
+        visited = {start}
+        while queue:
+            (row, col), path = queue.popleft()
+            for action, (dr, dc) in MOVES.items():
+                if (row, col, action) in WALLS:
+                    continue
+                nr, nc = row + dr, col + dc
+                if not (0 <= nr < 5 and 0 <= nc < 5):
+                    continue
+                if (nr, nc) == target:
+                    return path[0] if path else action
+                if (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append(((nr, nc), path + [action]))
+
+    def optimal_heuristic_policy(obs):
+        taxi_row, taxi_col, pass_loc, dest = decode_state(obs)
+        target = LOCS[pass_loc] if pass_loc < 4 else LOCS[dest]
+
+        if (taxi_row, taxi_col) == target:
+            return 4 if pass_loc < 4 else 5
+
+        return bfs((taxi_row, taxi_col), target)
+    
+    data_oracle = CustomFixedPolicyDataOracle(CustomFixedPolicyDataOracleConfig(
+        env=env,action_selector=optimal_heuristic_policy
+    ))
+    '''
     
     # Evaluate
     rewards = []
@@ -348,7 +408,7 @@ def main():
         total = 0
         t = 0
         while not done:
-            action = data_oracle.q_learner._select_action(
+            action = data_oracle._select_action(
                 data_oracle._encode_state(obs))
             obs, reward, terminated, truncated, _ = env.step(action)
             total += reward
@@ -414,7 +474,7 @@ def main():
     )
     
     
-    table = test_hyperparams(experiment_config, n_trajectories_list=[250], trainer_oracle_train_timesteps_list=[60000000,70000000,80000000,90000000,100000000], fp_rate_list=[0.25])
+    table = test_hyperparams(experiment_config, n_trajectories_list=[125], trainer_oracle_train_timesteps_list=[7000000]*20, fp_rate_list=[0.25])
     
     #experiment_runner = ExperimentRunner(experiment_config)
     #table = test_fp_rates(

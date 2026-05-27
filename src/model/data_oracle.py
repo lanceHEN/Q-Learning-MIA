@@ -9,8 +9,7 @@ import numpy as np
 from stable_baselines3 import DQN
 
 if TYPE_CHECKING:
-    from config import (
-        RandomDataOracleConfig,
+    from config import (RandomDataOracleConfig,
                         QLearnerDataOracleConfig,
                         DQNDataOracleConfig,
                         CustomFixedPolicyDataOracleConfig)
@@ -101,6 +100,9 @@ class QLearnerDataOracle(DataOracle):
         self.state_encoder = config.state_encoder
         
         random.seed(config.random_seed)
+        
+    def reset(self):
+        self.q_learner.reset()
     
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
@@ -175,7 +177,10 @@ class DQNDataOracle(DataOracle):
         """
         super().__init__(config.env, config.verbose, config.state_encoder)
         
-        self.dqn = config.dqn
+        self.config = config
+        
+    def reset(self):
+        self.dqn = self.config.dqn
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """

@@ -5,7 +5,7 @@ from .trainer_oracle import (
     DeepOfflineTrainerOracle,
     DeepOnlineTrainerOracle
 )
-from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle
+from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle
 from .mia import MIAClassifier, SARSAMIA
 from .generic_model import QLearner
 
@@ -19,5 +19,6 @@ __all__ = [
     "DQNDataOracle",
     "DataOracle",
     "DeepOfflineTrainerOracle",
-    "DeepOnlineTrainerOracle"
+    "DeepOnlineTrainerOracle",
+    "CustomFixedPolicyDataOracle"
 ]

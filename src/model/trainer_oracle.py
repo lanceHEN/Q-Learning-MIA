@@ -96,6 +96,9 @@ class QLearnerTrainerOracle(TrainerOracle):
         self.data_oracle = config.data_oracle
         self.q_learner = config.q_learner # compose w/ q learner
         
+    def reset(self):
+        self.q_learner.reset()
+        
     def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
         """
         Produces Q value for the given state-action pair.
@@ -180,6 +183,9 @@ class DeepTrainerOracle(TrainerOracle):
         
         self.dqn = config.dqn
         
+    def reset(self):
+        self.dqn = self.config.dqn
+        
     def _q_vals(self, state: Union[int, Tuple]):
         """
         Produces [1, n_actions] array of Q values for given state.
@@ -250,6 +256,9 @@ class DeepOfflineTrainerOracle(DeepTrainerOracle):
         ))
         
         self.data_oracle = config.data_oracle
+        
+    def reset(self):
+        self.dqn = self.config.dqn
         
     def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
         """

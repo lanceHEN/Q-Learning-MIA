@@ -27,128 +27,65 @@ class RandomDataOracle(DataOracle):
     """
     A Data Oracle implementation with a random policy.
     """
-    
+
     def __init__(self, config: RandomDataOracleConfig):
-        """
-        Initializes a RandomDataOracle with the given config.
-        
-        Args:
-            config (RandomDataOracleConfig): Config info for the
-                RandomDataOracle.
-        """
-        super().__init__(config.env, config.verbose, config.state_encoder)
-        
+        super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
+
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        """
-        Selects action for given state according to random policy. Note state isn't used.
-        
-        Args:
-            state (Union[int, Tuple]): State to produce an action for.
-            
-        Returns:
-            Union[int, Tuple]: Action for given state.
-        """
         return self.env.action_space.sample()
-    
+
 class CustomFixedPolicyDataOracle(DataOracle):
     """
     A Data Oracle implementation using a fixed policy function which is given on
     construction.
     """
-    
+
     def __init__(self, config: CustomFixedPolicyDataOracleConfig):
-        """
-        Initializes a CustomFixedPolicyDataOracle with the given config.
-        
-        Args:
-            config (CustomFixedPolicyDataOracleConfig): Config info for the
-                CustomFixedPolicyDataOracle.
-        """
-        super().__init__(config.env, config.verbose, config.state_encoder)
-        
+        super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
         self.action_selector = config.action_selector
-        
+
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        """
-        Selects action for given state according to the custom policy.]
-        
-        Args:
-            state (Union[int, Tuple]): State to produce an action for.
-            
-        Returns:
-            Union[int, Tuple]: Action for given state.
-        """
         return self.action_selector(state)
-    
+
 class QLearnerDataOracle(DataOracle):
     """
     A Data Oracle implementation with a Q Learning policy.
     """
-    
-    def __init__(self, config: QLearnerDataOracleConfig):
-        """
-        Initializes a QLearnerDataOracle with the given config info.
-        """
-        super().__init__(config.env, config.verbose, config.state_encoder)
-        
-        self.q_learner = config.q_learner
 
+    def __init__(self, config: QLearnerDataOracleConfig):
+        super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
+        self.q_learner = config.q_learner
         self.learning_starts = config.learning_starts
-        
         self.decay_rate = config.decay_rate
-        
-        self.state_encoder = config.state_encoder
-        
         random.seed(config.random_seed)
-        
+
     def reset(self):
         self.q_learner.reset()
-    
+
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        """
-        Produces an action for the given state. Method for doing that
-        left to subclasses.
-        
-        Args:
-            state (Union[int, Tuple]): State to produce an action for.
-            
-        Returns:
-            Union[int, Tuple]: Action for given state.
-        """
         return self.q_learner._select_action(state)
-        
+
     def _select_action_epsilon_greedy(self, state):
-        """
-        Select an action via epsilon-greedy, for given state.
-        """
         if random.random() < self.q_learner.epsilon:
-            # Random choice
             return self.env.action_space.sample()
-        else:
-            return self._select_action(state)
-    
+        return self._select_action(state)
+
     def train(self, learn_timesteps: int):
         """
         Trains self for the given number of learning timesteps. Only samples
         from replay buffer once learning_starts is reached.
-        
-        Args:
-            learn_timesteps (int): Number of timesteps to learn.
         """
         print(f"Training Q Learner Data Oracle for {learn_timesteps} timesteps")
-        
+
         state, _ = self.env.reset()
-        
         done = False
-    
-        for train_timesteps in range(learn_timesteps):
+
+        for t in range(learn_timesteps):
             action = self._select_action_epsilon_greedy(self._encode_state(state))
-            
             next_state, reward, done, _, _ = self.env.step(action)
-            
             self.q_learner.replay_buffer.append((self._encode_state(state), action, reward, self._encode_state(next_state)))
-            
-            if train_timesteps >= self.learning_starts:
+
+            if t >= self.learning_starts:
                 transition = random.choice(self.q_learner.replay_buffer)
                 self.q_learner._q_update(*transition)
 
@@ -157,55 +94,45 @@ class QLearnerDataOracle(DataOracle):
                 done = False
             else:
                 state = next_state
-                
-            self.q_learner.epsilon = self.q_learner.epsilon * self.decay_rate
-           
-        if self.verbose: 
+
+            self.q_learner.epsilon *= self.decay_rate
+
+        if self.verbose:
             print("Finished training")
 
-# For now the overlap with the DQN trainer oracle isn't enough to abstract out
-# their similarities
 class DQNDataOracle(DataOracle):
     """
     A DQN-based data oracle for more complex envs.
     """
-    
-    
+
     def __init__(self, config: DQNDataOracleConfig):
-        """
-        Initializes a DQNDataOracle with the given config info.
-        """
-        super().__init__(config.env, config.verbose, config.state_encoder)
-        
+        super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
         self.config = config
-        
+        self.reset()
+
     def reset(self):
-        self.dqn = self.config.dqn
-        
+        self.dqn = DQN(
+            policy="MlpPolicy",
+            env=self.config.env,
+            learning_rate=self.config.learning_rate,
+            learning_starts=self.config.learning_starts,
+            exploration_fraction=self.config.exploration_fraction,
+            exploration_final_eps=self.config.exploration_final_eps,
+            batch_size=self.config.batch_size,
+            buffer_size=self.config.buffer_size,
+            device=self.config.device,
+        )
+
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        """
-        Selects action for given state according to DQN policy. Note state isn't used.
-        
-        Args:
-            state (Union[int, Tuple]): State to produce an action for.
-            
-        Returns:
-            Union[int, Tuple]: Action for given state.
-        """
         if isinstance(state, tuple):
             state = np.array(state)
         action, _ = self.dqn.predict(state, deterministic=True)
         if action.ndim == 0:
             action = int(action)
         return action
-    
+
     def train(self, learn_timesteps: int):
         """
-        Trains self for the given number of learning timesteps. Only samples
-        from replay buffer once learning_starts is reached.
-        
-        Args:
-            learn_timesteps (int): Number of timesteps to learn.
+        Trains self for the given number of learning timesteps.
         """
         self.dqn.learn(total_timesteps=learn_timesteps)
-    

@@ -21,6 +21,7 @@ class GridWorld(gym.Env):
         self.slip_prob = slip_prob
         
     def reset(self, seed=None, options=None):
+        super().reset(seed=seed)  # this seeds self.np_random
         # Random start position
         self.pos = (
             np.random.randint(0, self.size),

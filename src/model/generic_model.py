@@ -39,13 +39,6 @@ class GenericModel(ABC):
         
         if isinstance(state, np.ndarray):
             return tuple(state.flatten())
-        elif isinstance(state, dict) and 'image' in state:
-            direction = state['direction']
-            positions = np.argwhere(state['image'][:,:,0] == 10)
-            if len(positions) == 0:
-                return (direction, -1, -1)
-            
-            return (direction,) + tuple(positions[0])
         else:
             return state
         
@@ -97,7 +90,7 @@ class GenericModel(ABC):
             current_state = next_state
             
             t += 1
-            if t == T_max:
+            if t >= T_max:
                 break
             
         return traj
@@ -146,7 +139,7 @@ class QLearner(GenericModel):
         Args:
             config (QLearnerConfig): Config info.
         """
-        super().__init__(config.env, config.verbose, config.state_encoder)
+        super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
         
         self.alpha = config.alpha
         

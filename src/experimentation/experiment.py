@@ -7,43 +7,26 @@ from typing import List, Tuple
 import gymnasium as gym
 import numpy as np
 from matplotlib import pyplot as plt
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_curve, auc
 from collections import Counter
 import pandas as pd
-import icu_sepsis
-from minigrid.wrappers import FlatObsWrapper
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
 from config import (
-    QLearnerTrainerOracleConfig,
-    DeepTrainerOracleConfig,
-    QLearnerDataOracleConfig,
     ExperimentRunnerConfig,
-    SARSAMIAConfig,
-    QLearnerConfig,
-    DQNDataOracleConfig,
-    DeepOnlineTrainerOracleConfig,
     DeepOfflineTrainerOracleConfig,
-    CustomFixedPolicyDataOracleConfig
+    CustomFixedPolicyDataOracleConfig,
 )
 
 src_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(src_dir))
 from model import (
-    QLearnerDataOracle,
-    QLearnerTrainerOracle,
-    DeepTrainerOracle,
     MIAClassifier,
-    SARSAMIA,
-    QLearner,
-    DQNDataOracle,
-    DeepOnlineTrainerOracle,
     DeepOfflineTrainerOracle,
-    CustomFixedPolicyDataOracle
+    CustomFixedPolicyDataOracle,
 )
-from envs import GridWorld
-from policies import lunar_lander_policy, make_expert_policy, BabyAIBotEnv, make_minigrid_bot_policy
+from policies.sepsis import make_expert_policy
 
 
 class ExperimentRunner:
@@ -66,6 +49,10 @@ class ExperimentRunner:
         train_trajectories, external_trajectories = cfg.trainer_oracle.train(
             cfg.trainer_oracle_train_timesteps, n_train, n_external, cfg.T_max, cfg.seed
         )
+
+        eval_trajs = cfg.trainer_oracle.generate_trajectories(50, cfg.T_max)
+        mean_reward = np.mean([sum(r for _, _, r, _ in traj) for traj in eval_trajs])
+        print(f"[{cfg.experiment_name}] Trainer oracle mean reward: {mean_reward:.4f}")
 
         # Diagnostic: (s,a) overlap between member and non-member sets
         member_counts = Counter(
@@ -119,16 +106,21 @@ class ExperimentRunner:
         preds = np.concatenate((train_preds, external_preds))
         labels = np.concatenate((np.ones(len(train_preds)), np.zeros(len(external_preds))))
 
+        eval_labels = np.concatenate((np.ones(len(member_scores)), np.zeros(len(nonmember_scores))))
+        fpr, tpr, _ = roc_curve(eval_labels, -np.concatenate((member_scores, nonmember_scores)))
+        roc_auc = auc(fpr, tpr)
+
         return (
             accuracy_score(labels, preds),
             precision_score(labels, preds),
             recall_score(labels, preds),
             cfg.mia_classifier.eta,
+            roc_auc,
         )
 
-    def run_experiment(self) -> Tuple[float, float, float, float]:
+    def run_experiment(self) -> Tuple[float, float, float, float, float]:
         """
-        Runs a full MIA experiment and returns (accuracy, precision, recall, eta).
+        Runs a full MIA experiment and returns (accuracy, precision, recall, eta, auc).
         """
         train_fit, train_eval, external_fit, external_eval = self._collect_trajectories()
         return self._evaluate(
@@ -144,11 +136,11 @@ class ExperimentRunner:
         rows = []
         for fp_rate in fp_rate_list:
             name = f"{self.config.experiment_name}_fp_rate_{fp_rate}"
-            accuracy, precision, recall, eta = self._evaluate(
+            accuracy, precision, recall, eta, roc_auc = self._evaluate(
                 train_fit, train_eval, external_fit, external_eval, fp_rate, name
             )
             rows.append({"FP Rate": fp_rate, "Accuracy": accuracy,
-                         "Precision": precision, "Recall": recall, "Eta": eta})
+                         "Precision": precision, "Recall": recall, "Eta": eta, "AUC": roc_auc})
         return pd.DataFrame(rows)
 
 
@@ -158,10 +150,12 @@ def test_hyperparams(
     train_external_split_list: List[float] = [0.5],
     trainer_oracle_train_timesteps_list: List[int] = [1000000],
     fp_rate_list: List[float] = [0.05],
+    csv_path: str = None,
 ) -> pd.DataFrame:
     """
     Produces a results table for every combination of the given hyperparameter
-    lists. Does not mutate experiment_config.
+    lists. Does not mutate experiment_config. If csv_path is given, writes
+    after each run so results are visible before all runs finish.
     """
     base_name = experiment_config.experiment_name
     rows = []
@@ -181,8 +175,8 @@ def test_hyperparams(
             fp_rate=fp_rate,
             experiment_name=f"{base_name}_({n_traj},{split},{steps},{fp_rate})",
         )
-        accuracy, precision, recall, eta = ExperimentRunner(config).run_experiment()
-        rows.append({
+        accuracy, precision, recall, eta, roc_auc = ExperimentRunner(config).run_experiment()
+        row = {
             "N. Trajectories": n_traj,
             "Train/External Traj Split": split,
             "Trainer Oracle Timesteps": steps,
@@ -191,45 +185,30 @@ def test_hyperparams(
             "Precision": precision,
             "Recall": recall,
             "Eta": eta,
-        })
+            "AUC": roc_auc,
+        }
+        rows.append(row)
+        if csv_path:
+            pd.DataFrame(rows).to_csv(csv_path)
 
     return pd.DataFrame(rows)
 
 
 def main():
-    env = BabyAIBotEnv(FlatObsWrapper(gym.make("BabyAI-GoToObj-v0")))
-    obs, _ = env.reset()
-    print(f"Obs length: {len(obs)}")
-
-    T_max = 200
-    verbose = 1
+    env = gym.make("Sepsis/ICU-Sepsis-v2")
+    T_max = 100
     seed = None
-    experiment_name = "minigrid"
-    alpha = 0.001
+    experiment_name = "sepsis-dqn-fixed-policy"
 
-    policy = make_minigrid_bot_policy(env)
     data_oracle = CustomFixedPolicyDataOracle(CustomFixedPolicyDataOracleConfig(
-        env=env, action_selector=policy
+        env=env, action_selector=make_expert_policy()
     ))
 
-    # Sanity-check the data oracle's policy performance
-    eval_trajs = data_oracle.generate_trajectories(50, T_max)
-    mean_reward = np.mean([sum(r for _, _, r, _ in traj) for traj in eval_trajs])
-    print(f"Mean reward: {mean_reward:.4f}")
-
-    trainer_oracle = DeepOfflineTrainerOracle(
-        DeepOfflineTrainerOracleConfig(
-            env=env,
-            alpha=alpha,
-            learning_rate=0.0005,
-            learning_starts=0,
-            exploration_fraction=0,
-            exploration_final_eps=0,
-            batch_size=32,
-            buffer_size=10000000,
-            data_oracle=data_oracle
-        )
-    )
+    trainer_oracle = DeepOfflineTrainerOracle(DeepOfflineTrainerOracleConfig(
+        env=env,
+        data_oracle=data_oracle,
+        buffer_size=500000
+    ))
 
     mia_classifier = MIAClassifier(trainer_oracle)
 
@@ -240,36 +219,30 @@ def main():
         mia_classifier=mia_classifier,
         T_max=T_max,
         seed=seed,
-        n_trajectories=125,
+        n_trajectories=250,
         train_external_split=0.5,
-        trainer_oracle_train_timesteps=1000000,
+        trainer_oracle_train_timesteps=0,
         fp_rate=0.25,
         mia_train_test_split=0.5
     )
 
+    csv_path = "data/tables/hyperparam_results_sepsis_dqn_fixed_policy.csv"
     table = test_hyperparams(
         experiment_config,
-        n_trajectories_list=[125],
-        trainer_oracle_train_timesteps_list=[2000000,5000000,10000000,20000000],
-        fp_rate_list=[0.25]
+        n_trajectories_list=[100, 200, 500, 1000],
+        trainer_oracle_train_timesteps_list=[0]*50,
+        fp_rate_list=[0.25],
+        csv_path=csv_path,
     )
 
-    table.to_csv("data/tables/hyperparam_results_minigrid.csv")
+    table.to_csv(csv_path)
     print(table)
 
-    setting_cols = ["N. Trajectories", "Train/External Traj Split", "Trainer Oracle Timesteps", "FP Rate"]
-    metric_cols = ["Accuracy", "Precision", "Recall"]
-    means = table.groupby(setting_cols)[metric_cols].mean().reset_index()
-    print("\nMeans:")
-    print(means)
-
-    plt.figure()
-    plt.plot(table["FP Rate"], table["Accuracy"], label='Accuracy')
-    plt.plot(table["FP Rate"], table["Precision"], label='Precision')
-    plt.plot(table["FP Rate"], table["Recall"], label='Recall')
-    plt.xlabel("FP Rate")
-    plt.legend()
-    plt.savefig(f"data/plots/fp_rates/{experiment_name}_fp_rates_plot.png")
+    metric_cols = ["Accuracy", "Precision", "Recall", "AUC"]
+    summary = table.groupby("N. Trajectories")[metric_cols].agg(["mean", "std"]).round(4)
+    summary.to_csv("data/tables/summary_sepsis_dqn_fixed_policy.csv")
+    print("\nSummary (mean ± std):")
+    print(summary)
 
 
 if __name__ == "__main__":

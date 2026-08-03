@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 import gymnasium as gym
 from stable_baselines3 import DQN
-from stable_baselines3.common.callbacks import BaseCallback, ProgressBarCallback
+from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
 import torch
 
@@ -155,12 +155,9 @@ class DeepTrainerOracle(TrainerOracle):
 
     def reset(self):
         self.dqn = DQN(
-            policy="MlpPolicy",
+            policy=self.config.policy,
             env=self.config.env,
             learning_rate=self.config.learning_rate,
-            learning_starts=self.config.learning_starts,
-            exploration_fraction=self.config.exploration_fraction,
-            exploration_final_eps=self.config.exploration_final_eps,
             batch_size=self.config.batch_size,
             buffer_size=self.config.buffer_size,
             device=self.config.device,
@@ -171,7 +168,7 @@ class DeepTrainerOracle(TrainerOracle):
         Produces [1, n_actions] array of Q values for given state.
         """
         if isinstance(state, tuple):
-            state = np.array(state)
+            state = np.array(state).reshape(self.env.observation_space.shape)
         obs_tensor, _ = self.dqn.policy.obs_to_tensor(state)
         with torch.no_grad():
             q_values = self.dqn.policy.q_net(obs_tensor)
@@ -209,19 +206,34 @@ class DeepOfflineTrainerOracle(DeepTrainerOracle):
         if self.verbose:
             print(f"Training on {len(train_trajectories)} trajectories for {training_steps} training steps")
 
+        obs_shape = self.dqn.observation_space.shape
         for traj in train_trajectories:
             for i, (state, action, reward, next_state) in enumerate(traj):
                 done = i == len(traj) - 1
                 self.dqn.replay_buffer.add(
-                    np.array(state),
-                    np.array(next_state),
+                    np.array(state).reshape(obs_shape),
+                    np.array(next_state).reshape(obs_shape),
                     np.array([action]),
                     np.array([reward]),
                     np.array([done]),
                     [{}]
                 )
 
-        self.dqn.learn(training_steps, callback=ProgressBarCallback())
+        from stable_baselines3.common.logger import configure as sb3_configure
+        from tqdm import tqdm
+        self.dqn.set_logger(sb3_configure(folder=None, format_strings=[]))
+        steps_per_epoch = max(1, self.dqn.replay_buffer.size() // self.config.batch_size)
+        gradient_steps = self.config.training_epochs * steps_per_epoch
+        self.dqn.target_update_interval = max(1, gradient_steps // 100)
+        print(f"Offline DQN: {self.dqn.replay_buffer.size()} transitions, "
+              f"{self.config.training_epochs} epochs → {gradient_steps} gradient steps, "
+              f"target update every {self.dqn.target_update_interval} steps")
+        chunk = min(1000, gradient_steps)
+        for _ in tqdm(range(gradient_steps // chunk), desc="Offline DQN training"):
+            self.dqn.train(batch_size=self.config.batch_size, gradient_steps=chunk)
+        remainder = gradient_steps % chunk
+        if remainder:
+            self.dqn.train(batch_size=self.config.batch_size, gradient_steps=remainder)
 
         if self.verbose:
             print("Finished training")

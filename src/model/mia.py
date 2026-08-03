@@ -103,7 +103,8 @@ class MIAClassifier:
 
         # ROC curve (scored by raw Bellman residual, lower = more likely member)
         fpr, tpr, _ = roc_curve(labels, -np.array(all_scores))
-        roc_auc = auc(fpr, tpr)
+        self.roc_auc = auc(fpr, tpr)
+        roc_auc = self.roc_auc
 
         plt.figure()
         plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")

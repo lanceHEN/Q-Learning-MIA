@@ -7,6 +7,7 @@ from collections import defaultdict, deque
 import gymnasium as gym
 import numpy as np
 from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import ProgressBarCallback
 
 if TYPE_CHECKING:
     from config import (RandomDataOracleConfig,
@@ -63,12 +64,12 @@ class QLearnerDataOracle(DataOracle):
         self.q_learner.reset()
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        return self.q_learner._select_action(state)
+        return self._select_action_epsilon_greedy(state)
 
     def _select_action_epsilon_greedy(self, state):
         if random.random() < self.q_learner.epsilon:
             return self.env.action_space.sample()
-        return self._select_action(state)
+        return self.q_learner._select_action(state)
 
     def train(self, learn_timesteps: int):
         """
@@ -104,7 +105,6 @@ class DQNDataOracle(DataOracle):
     """
     A DQN-based data oracle for more complex envs.
     """
-
     def __init__(self, config: DQNDataOracleConfig):
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
         self.config = config
@@ -112,7 +112,7 @@ class DQNDataOracle(DataOracle):
 
     def reset(self):
         self.dqn = DQN(
-            policy="MlpPolicy",
+            policy=self.config.policy,
             env=self.config.env,
             learning_rate=self.config.learning_rate,
             learning_starts=self.config.learning_starts,
@@ -125,7 +125,7 @@ class DQNDataOracle(DataOracle):
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         if isinstance(state, tuple):
-            state = np.array(state)
+            state = np.array(state).reshape(self.env.observation_space.shape)
         action, _ = self.dqn.predict(state, deterministic=True)
         if action.ndim == 0:
             action = int(action)
@@ -135,4 +135,4 @@ class DQNDataOracle(DataOracle):
         """
         Trains self for the given number of learning timesteps.
         """
-        self.dqn.learn(total_timesteps=learn_timesteps)
+        self.dqn.learn(total_timesteps=learn_timesteps, callback=ProgressBarCallback())

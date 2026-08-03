@@ -67,6 +67,7 @@ class DQNDataOracleConfig(DataOracleConfig):
     batch_size: int = 64
     buffer_size: int = 100000
     device: str = "auto"
+    policy: str = "MlpPolicy"
 
 @dataclass
 class TrainerOracleConfig:
@@ -87,16 +88,15 @@ class QLearnerTrainerOracleConfig(TrainerOracleConfig):
 @dataclass
 class DeepTrainerOracleConfig(TrainerOracleConfig):
     learning_rate: float = 0.0005
-    learning_starts: int = 0
-    exploration_fraction: float = 0
-    exploration_final_eps: float = 0
     batch_size: int = 32
     buffer_size: int = 10000000
     device: str = "auto"
+    policy: str = "MlpPolicy"
 
 @dataclass
 class DeepOfflineTrainerOracleConfig(DeepTrainerOracleConfig):
     data_oracle: Optional[DataOracle] = None
+    training_epochs: int = 100
 
 @dataclass
 class DeepOnlineTrainerOracleConfig(DeepTrainerOracleConfig):

@@ -5,6 +5,7 @@ from .trainer_oracle import (
     DeepOfflineTrainerOracle,
     DeepOnlineTrainerOracle
 )
+from .cql_dqn import CQLDQN
 from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle
 from .mia import MIAClassifier, SARSAMIA
 from .generic_model import QLearner

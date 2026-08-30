@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import gymnasium as gym
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
+from .cql_dqn import CQLDQN
 import numpy as np
 import torch
 
@@ -154,14 +155,20 @@ class DeepTrainerOracle(TrainerOracle):
         self.reset()
 
     def reset(self):
-        self.dqn = DQN(
+        cql_alpha = getattr(self.config, 'cql_alpha', 0.0)
+        cls = CQLDQN if cql_alpha > 0 else DQN
+        kwargs = dict(
             policy=self.config.policy,
             env=self.config.env,
             learning_rate=self.config.learning_rate,
             batch_size=self.config.batch_size,
             buffer_size=self.config.buffer_size,
+            gamma=self.config.gamma,
             device=self.config.device,
         )
+        if cql_alpha > 0:
+            kwargs['cql_alpha'] = cql_alpha
+        self.dqn = cls(**kwargs)
 
     def _q_vals(self, state: Union[int, Tuple]):
         """
@@ -220,18 +227,28 @@ class DeepOfflineTrainerOracle(DeepTrainerOracle):
                 )
 
         from stable_baselines3.common.logger import configure as sb3_configure
+        from stable_baselines3.common.utils import polyak_update
         from tqdm import tqdm
         self.dqn.set_logger(sb3_configure(folder=None, format_strings=[]))
-        steps_per_epoch = max(1, self.dqn.replay_buffer.size() // self.config.batch_size)
-        gradient_steps = self.config.training_epochs * steps_per_epoch
-        self.dqn.target_update_interval = max(1, gradient_steps // 100)
-        print(f"Offline DQN: {self.dqn.replay_buffer.size()} transitions, "
-              f"{self.config.training_epochs} epochs → {gradient_steps} gradient steps, "
-              f"target update every {self.dqn.target_update_interval} steps")
-        chunk = min(1000, gradient_steps)
-        for _ in tqdm(range(gradient_steps // chunk), desc="Offline DQN training"):
-            self.dqn.train(batch_size=self.config.batch_size, gradient_steps=chunk)
-        remainder = gradient_steps % chunk
+        gradient_steps = self.config.gradient_steps
+        n_chunks = 100
+        chunk_size = max(1, gradient_steps // n_chunks)
+        tau = self.config.tau
+        if tau >= 1.0:
+            # No target network: alias q_net_target to q_net so TD targets always
+            # use the current online network with zero lag.
+            self.dqn.q_net_target = self.dqn.q_net
+            print(f"Offline DQN: {self.dqn.replay_buffer.size()} transitions, "
+                  f"{gradient_steps} gradient steps (no target network)")
+        else:
+            print(f"Offline DQN: {self.dqn.replay_buffer.size()} transitions, "
+                  f"{gradient_steps} gradient steps, "
+                  f"soft target update tau={tau} every chunk")
+        for _ in tqdm(range(n_chunks), desc="Offline DQN training"):
+            self.dqn.train(batch_size=self.config.batch_size, gradient_steps=chunk_size)
+            if tau < 1.0:
+                polyak_update(self.dqn.q_net.parameters(), self.dqn.q_net_target.parameters(), tau)
+        remainder = gradient_steps % n_chunks
         if remainder:
             self.dqn.train(batch_size=self.config.batch_size, gradient_steps=remainder)
 

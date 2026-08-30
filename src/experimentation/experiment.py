@@ -6,10 +6,12 @@ from typing import List, Tuple
 
 import gymnasium as gym
 import numpy as np
+
 from matplotlib import pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_curve, auc
 from collections import Counter
 import pandas as pd
+import icu_sepsis  # registers Sepsis/ICU-Sepsis-v2 with gymnasium
 
 root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
@@ -17,6 +19,8 @@ from config import (
     ExperimentRunnerConfig,
     DeepOfflineTrainerOracleConfig,
     CustomFixedPolicyDataOracleConfig,
+    QLearnerDataOracleConfig,
+    QLearnerConfig,
 )
 
 src_dir = Path(__file__).parent.parent
@@ -25,10 +29,9 @@ from model import (
     MIAClassifier,
     DeepOfflineTrainerOracle,
     CustomFixedPolicyDataOracle,
+    QLearnerDataOracle,
+    QLearner,
 )
-from policies.sepsis import make_expert_policy
-
-
 class ExperimentRunner:
     """
     Runs a membership inference attack experiment against a trained RL model.
@@ -41,6 +44,9 @@ class ExperimentRunner:
         """
         Trains the oracle, generates trajectories, and splits them into
         fit/eval sets for both member and non-member populations.
+
+        Returns the four trajectory splits plus the trainer oracle's mean
+        episode reward (averaged over 500 eval trajectories).
         """
         cfg = self.config
         n_train = round(cfg.n_trajectories * cfg.train_external_split)
@@ -50,16 +56,19 @@ class ExperimentRunner:
             cfg.trainer_oracle_train_timesteps, n_train, n_external, cfg.T_max, cfg.seed
         )
 
-        eval_trajs = cfg.trainer_oracle.generate_trajectories(50, cfg.T_max)
+        eval_trajs = cfg.trainer_oracle.generate_trajectories(500, cfg.T_max)
         mean_reward = np.mean([sum(r for _, _, r, _ in traj) for traj in eval_trajs])
         print(f"[{cfg.experiment_name}] Trainer oracle mean reward: {mean_reward:.4f}")
 
         # Diagnostic: (s,a) overlap between member and non-member sets
+        def _hashable(s):
+            return tuple(s.tolist()) if isinstance(s, np.ndarray) else s
+
         member_counts = Counter(
-            (s, a) for traj in train_trajectories for s, a, _, _ in traj
+            (_hashable(s), a) for traj in train_trajectories for s, a, _, _ in traj
         )
         nonmember_counts = Counter(
-            (s, a) for traj in external_trajectories for s, a, _, _ in traj
+            (_hashable(s), a) for traj in external_trajectories for s, a, _, _ in traj
         )
         overlap_pairs = member_counts.keys() & nonmember_counts.keys()
         total_nonmember = sum(nonmember_counts.values())
@@ -76,6 +85,7 @@ class ExperimentRunner:
             train_trajectories[train_split:],
             external_trajectories[:external_split],
             external_trajectories[external_split:],
+            mean_reward,
         )
 
     def _evaluate(self,
@@ -118,29 +128,32 @@ class ExperimentRunner:
             roc_auc,
         )
 
-    def run_experiment(self) -> Tuple[float, float, float, float, float]:
+    def run_experiment(self) -> Tuple[float, float, float, float, float, float]:
         """
-        Runs a full MIA experiment and returns (accuracy, precision, recall, eta, auc).
+        Runs a full MIA experiment and returns
+        (accuracy, precision, recall, eta, auc, trainer_mean_reward).
         """
-        train_fit, train_eval, external_fit, external_eval = self._collect_trajectories()
-        return self._evaluate(
+        train_fit, train_eval, external_fit, external_eval, mean_reward = self._collect_trajectories()
+        accuracy, precision, recall, eta, roc_auc = self._evaluate(
             train_fit, train_eval, external_fit, external_eval,
             self.config.fp_rate, self.config.experiment_name
         )
+        return accuracy, precision, recall, eta, roc_auc, mean_reward
 
     def test_fp_rates(self, fp_rate_list: List[float] = [0.05, 0.1, 0.15, 0.2, 0.25]) -> pd.DataFrame:
         """
         Runs the MIA classifier at each fp_rate without re-training the oracle.
         """
-        train_fit, train_eval, external_fit, external_eval = self._collect_trajectories()
+        train_fit, train_eval, external_fit, external_eval, mean_reward = self._collect_trajectories()
         rows = []
         for fp_rate in fp_rate_list:
             name = f"{self.config.experiment_name}_fp_rate_{fp_rate}"
             accuracy, precision, recall, eta, roc_auc = self._evaluate(
                 train_fit, train_eval, external_fit, external_eval, fp_rate, name
             )
-            rows.append({"FP Rate": fp_rate, "Accuracy": accuracy,
-                         "Precision": precision, "Recall": recall, "Eta": eta, "AUC": roc_auc})
+            rows.append({"FP Rate": fp_rate, "Accuracy": accuracy, "Precision": precision,
+                         "Recall": recall, "Eta": eta, "AUC": roc_auc,
+                         "Trainer Mean Reward": mean_reward})
         return pd.DataFrame(rows)
 
 
@@ -175,12 +188,13 @@ def test_hyperparams(
             fp_rate=fp_rate,
             experiment_name=f"{base_name}_({n_traj},{split},{steps},{fp_rate})",
         )
-        accuracy, precision, recall, eta, roc_auc = ExperimentRunner(config).run_experiment()
+        accuracy, precision, recall, eta, roc_auc, mean_reward = ExperimentRunner(config).run_experiment()
         row = {
             "N. Trajectories": n_traj,
             "Train/External Traj Split": split,
             "Trainer Oracle Timesteps": steps,
             "FP Rate": fp_rate,
+            "Trainer Mean Reward": mean_reward,
             "Accuracy": accuracy,
             "Precision": precision,
             "Recall": recall,
@@ -195,19 +209,39 @@ def test_hyperparams(
 
 
 def main():
+    from policies.sepsis import make_expert_policy
     env = gym.make("Sepsis/ICU-Sepsis-v2")
     T_max = 100
     seed = None
-    experiment_name = "sepsis-dqn-fixed-policy"
+    experiment_name = "sepsis-cql-epsilon-greedy"
 
-    data_oracle = CustomFixedPolicyDataOracle(CustomFixedPolicyDataOracleConfig(
-        env=env, action_selector=make_expert_policy()
+    #data_oracle = CustomFixedPolicyDataOracle(CustomFixedPolicyDataOracleConfig(
+    #    env=env,
+    #    action_selector=make_expert_policy(),
+    #))
+    q_learner = QLearner(QLearnerConfig(env=env))
+    data_oracle = QLearnerDataOracle(QLearnerDataOracleConfig(
+        env=env,
+        decay_rate=0.99999,
+        learning_starts=1000,
+        q_learner=q_learner,
     ))
+    data_oracle.train(1000000)
+
+    eval_trajs = data_oracle.generate_trajectories(500, T_max)
+    mean_reward = np.mean([sum(r for _, _, r, _ in traj) for traj in eval_trajs])
+    print(f"Data oracle mean reward: {mean_reward:.4f}")
 
     trainer_oracle = DeepOfflineTrainerOracle(DeepOfflineTrainerOracleConfig(
+        device="cpu",
         env=env,
         data_oracle=data_oracle,
-        buffer_size=500000
+        cql_alpha=2.0,
+        buffer_size=500_000,
+        gradient_steps=500_000,
+        learning_rate=0.001,
+        batch_size=128,
+        tau=.01,
     ))
 
     mia_classifier = MIAClassifier(trainer_oracle)
@@ -219,18 +253,18 @@ def main():
         mia_classifier=mia_classifier,
         T_max=T_max,
         seed=seed,
-        n_trajectories=250,
+        n_trajectories=100,
         train_external_split=0.5,
         trainer_oracle_train_timesteps=0,
         fp_rate=0.25,
         mia_train_test_split=0.5
     )
 
-    csv_path = "data/tables/hyperparam_results_sepsis_dqn_fixed_policy.csv"
+    csv_path = "data/tables/hyperparam_results_sepsis_cql_epsilon_greedy.csv"
     table = test_hyperparams(
         experiment_config,
         n_trajectories_list=[100, 200, 500, 1000],
-        trainer_oracle_train_timesteps_list=[0]*50,
+        trainer_oracle_train_timesteps_list=[0] * 1,
         fp_rate_list=[0.25],
         csv_path=csv_path,
     )
@@ -238,9 +272,9 @@ def main():
     table.to_csv(csv_path)
     print(table)
 
-    metric_cols = ["Accuracy", "Precision", "Recall", "AUC"]
+    metric_cols = ["Trainer Mean Reward", "Accuracy", "Precision", "Recall", "AUC"]
     summary = table.groupby("N. Trajectories")[metric_cols].agg(["mean", "std"]).round(4)
-    summary.to_csv("data/tables/summary_sepsis_dqn_fixed_policy.csv")
+    summary.to_csv("data/tables/summary_sepsis_cql_epsilon_greedy.csv")
     print("\nSummary (mean ± std):")
     print(summary)
 

@@ -90,13 +90,16 @@ class DeepTrainerOracleConfig(TrainerOracleConfig):
     learning_rate: float = 0.0005
     batch_size: int = 32
     buffer_size: int = 10000000
+    gamma: float = 0.999
     device: str = "auto"
     policy: str = "MlpPolicy"
 
 @dataclass
 class DeepOfflineTrainerOracleConfig(DeepTrainerOracleConfig):
     data_oracle: Optional[DataOracle] = None
-    training_epochs: int = 100
+    gradient_steps: int = 500_000
+    cql_alpha: float = 0.0      # 0 = standard DQN, >0 = CQL penalty
+    tau: float = 0.005          # soft target update coefficient; 1.0 = hard copy each chunk
 
 @dataclass
 class DeepOnlineTrainerOracleConfig(DeepTrainerOracleConfig):

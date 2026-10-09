@@ -1,7 +1,16 @@
-gym
-stable_baselines3
-mujoco-py<2.2,>=2.1
+gymnasium>=0.29
+icu-sepsis>=2.0
+stable-baselines3>=2.3
+torch>=2.0
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.3
+pandas>=2.0
+matplotlib>=3.7
 tqdm
 rich
-minigrid
-torch
+
+# Optional: only needed for the non-medical benchmark experiments
+# minigrid>=3.0
+# ale-py>=0.9
+# gymnasium[box2d]

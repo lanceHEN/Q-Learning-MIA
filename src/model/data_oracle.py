@@ -8,6 +8,7 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import ProgressBarCallback
+import torch
 
 if TYPE_CHECKING:
     from config import (RandomDataOracleConfig,
@@ -22,7 +23,16 @@ class DataOracle(GenericModel):
     This class provides no additional functionality beyond the GenericModel.
     It exists only for type-checking purposes.
     """
-    pass
+    
+    
+    def _select_action_from_q_vals(self, q_vals, tau):
+        """Selects action based on q values via softmax w/ temp tau."""
+        if tau <= 0:
+            return self.actions[int(np.argmax(q_vals))]
+        probs = np.exp((q_vals - np.max(q_vals)) / tau)
+        probs /= probs.sum()
+        return self.actions[np.random.choice(len(self.actions), p=probs)]
+        
 
 class RandomDataOracle(DataOracle):
     """
@@ -58,13 +68,19 @@ class QLearnerDataOracle(DataOracle):
         self.q_learner = config.q_learner
         self.learning_starts = config.learning_starts
         self.decay_rate = config.decay_rate
+        self.tau = config.tau
         random.seed(config.random_seed)
 
     def reset(self):
         self.q_learner.reset()
+        
+    def q_vector(self, state: Union[int, Tuple]):
+        q = self.q_learner.q_table.get(state, {})
+        return np.array([q.get(action, 0.0) for action in self.actions])
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        return self._select_action_epsilon_greedy(state)
+        q_vals = self.q_vector(state)
+        return self._select_action_from_q_vals(q_vals, self.tau)
 
     def _select_action_epsilon_greedy(self, state):
         if random.random() < self.q_learner.epsilon:
@@ -109,9 +125,15 @@ class DQNDataOracle(DataOracle):
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
         self.config = config
         self.reset()
+        
+    def save(self, path):
+        self.dqn.save(path=path)
+        
+    def load(self, path):
+        self.dqn = DQN.load(path)
 
     def reset(self):
-        self.dqn = DQN(
+        kwargs = dict(
             policy=self.config.policy,
             env=self.config.env,
             learning_rate=self.config.learning_rate,
@@ -121,15 +143,25 @@ class DQNDataOracle(DataOracle):
             batch_size=self.config.batch_size,
             buffer_size=self.config.buffer_size,
             device=self.config.device,
+            seed=self.config.seed,
+            target_update_interval=self.config.target_update_interval,
+            gamma=self.config.gamma
         )
-
-    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
+        if self.config.policy_kwargs is not None:
+            kwargs['policy_kwargs'] = self.config.policy_kwargs
+        self.dqn = DQN(**kwargs)
+        
+    def q_vector(self, state: Union[int, Tuple]):
         if isinstance(state, tuple):
             state = np.array(state).reshape(self.env.observation_space.shape)
-        action, _ = self.dqn.predict(state, deterministic=True)
-        if action.ndim == 0:
-            action = int(action)
-        return action
+        obs_tensor, _ = self.dqn.policy.obs_to_tensor(state)
+        with torch.no_grad():
+            q_vals = self.dqn.policy.q_net(obs_tensor).cpu().numpy()[0]
+        return q_vals
+
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
+        q_vals = self.q_vector(state)
+        return self._select_action_from_q_vals(q_vals, self.config.tau)
 
     def train(self, learn_timesteps: int):
         """

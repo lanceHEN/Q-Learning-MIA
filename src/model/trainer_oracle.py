@@ -1,6 +1,6 @@
 from __future__ import annotations
 import random
-from typing import List, Tuple, Union, TYPE_CHECKING
+from typing import List, Tuple, Union, Dict, TYPE_CHECKING
 from abc import ABC, abstractmethod
 
 import gymnasium as gym
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
         DeepOfflineTrainerOracleConfig,
         DeepOnlineTrainerOracleConfig
     )
-from .generic_model import GenericModel, QLearner
+from .generic_model import QFunctionLearner
 
 
 class TrajectoryRecorder(BaseCallback):
@@ -48,7 +48,7 @@ class TrajectoryRecorder(BaseCallback):
         return True
 
 
-class TrainerOracle(GenericModel):
+class TrainerOracle(QFunctionLearner):
     """
     Abstract class for Trainer Oracle implementations, including
     scaffolding for training and Bellman residual calculations.
@@ -56,15 +56,12 @@ class TrainerOracle(GenericModel):
 
     def __init__(self, config: TrainerOracleConfig):
         super().__init__(config.env, config.verbose, config.state_encoder)
+        self.config = config
         self.alpha = config.alpha
         self.discount_factor = config.discount_factor
-
-    @abstractmethod
-    def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
-        """
-        Produces Q value for the given state-action pair.
-        """
-        pass
+        self.perturbation_std = config.perturbation_std
+        self.noise = np.random.laplace if config.perturbation_dist == "laplace" else np.random.normal
+        self.perturb = True
 
     @abstractmethod
     def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
@@ -84,14 +81,40 @@ class TrainerOracle(GenericModel):
         """
         pass
 
-    @abstractmethod
     def optimal_state_val(self, state: Union[int, Tuple]) -> float:
         """
         Produces optimal Q value for a given state.
         """
+        return max(self._q_vals(state).values(), default=0)
+    
+    def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
+        noise = self.noise(loc=0, scale=self.perturbation_std) if self.perturb else 0
+        return self._unperturbed_q_val(state, action) + noise
+        
+    def _q_vals(self, state):
+        qv = self._unperturbed_q_vals(state)
+        if self.perturb:
+            return {a: val + self.noise(loc=0, scale=self.perturbation_std) for a, val in qv.items()}
+        else:
+            return dict(qv)
+    
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
+        q_vals = self._q_vals(state)
+        return max(q_vals, key = q_vals.get) if q_vals else self.env.action_space.sample()
+    
+    @abstractmethod
+    def _unperturbed_q_val(self, state, action) -> float:
+        """
+        Q-value estimate without output perturbation.
+        """
         pass
-
-
+    
+    @abstractmethod
+    def _unperturbed_q_vals(self, state) -> Dict[Union[int, Tuple], float]:
+        """
+        Per-action Q-value estimates for a state without output perturbation.
+        """
+        pass
 class QLearnerTrainerOracle(TrainerOracle):
     """
     The QLearnerTrainerOracle is the model to conduct MIAs against. It will take
@@ -112,8 +135,11 @@ class QLearnerTrainerOracle(TrainerOracle):
     def reset(self):
         self.q_learner.reset()
 
-    def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
+    def _unperturbed_q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
         return self.q_learner.q_table[state][action]
+    
+    def _unperturbed_q_vals(self, state):
+        return self.q_learner.q_vals(state)
 
     def train(self, training_steps: int, n_train: int, n_external: int, T_max: int, seed: int = None) -> Tuple[List[Tuple], List[Tuple]]:
         trajectories = self.data_oracle.generate_trajectories(n_train + n_external, T_max, seed)
@@ -136,14 +162,6 @@ class QLearnerTrainerOracle(TrainerOracle):
             print("Finished training")
 
         return train_trajectories, external_trajectories
-
-    def optimal_state_val(self, state: Union[int, Tuple]) -> float:
-        return max(self.q_learner.q_table[state].values(), default=0)
-
-    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        return self.q_learner._select_action(state)
-
-
 class DeepTrainerOracle(TrainerOracle):
     """
     Abstracts common implementation details between the Offline/Online DQN trainers.
@@ -151,7 +169,6 @@ class DeepTrainerOracle(TrainerOracle):
 
     def __init__(self, config: DeepTrainerOracleConfig):
         super().__init__(config)
-        self.config = config
         self.reset()
 
     def reset(self):
@@ -170,9 +187,9 @@ class DeepTrainerOracle(TrainerOracle):
             kwargs['cql_alpha'] = cql_alpha
         self.dqn = cls(**kwargs)
 
-    def _q_vals(self, state: Union[int, Tuple]):
+    def _raw_q_tensor(self, state: Union[int, Tuple]):
         """
-        Produces [1, n_actions] array of Q values for given state.
+        Produces [1, n_actions] tensor of Q values for given state.
         """
         if isinstance(state, tuple):
             state = np.array(state).reshape(self.env.observation_space.shape)
@@ -181,20 +198,12 @@ class DeepTrainerOracle(TrainerOracle):
             q_values = self.dqn.policy.q_net(obs_tensor)
         return q_values
 
-    def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
-        return self._q_vals(state)[0, action].item()
+    def _unperturbed_q_vals(self, state):
+        qv = self._raw_q_tensor(state)
+        return {i: qv[0, i].item() for i in range(qv.shape[1])}
 
-    def optimal_state_val(self, state: Union[int, Tuple]) -> float:
-        return self._q_vals(state)[0].max().item()
-
-    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        if isinstance(state, tuple):
-            state = np.array(state)
-        action, _ = self.dqn.predict(state, deterministic=True)
-        if action.ndim == 0:
-            action = int(action)
-        return action
-
+    def _unperturbed_q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
+        return self._raw_q_tensor(state)[0, action].item()
 
 class DeepOfflineTrainerOracle(DeepTrainerOracle):
     """
@@ -251,13 +260,14 @@ class DeepOfflineTrainerOracle(DeepTrainerOracle):
         remainder = gradient_steps % n_chunks
         if remainder:
             self.dqn.train(batch_size=self.config.batch_size, gradient_steps=remainder)
+            
+        for i in range(min(10, len(train_trajectories[0]))):
+            print(self._raw_q_tensor(train_trajectories[0][i][0]))
 
         if self.verbose:
             print("Finished training")
 
         return train_trajectories, external_trajectories
-
-
 class DeepOnlineTrainerOracle(DeepTrainerOracle):
     """
     A DQN-based trainer oracle with online learning.

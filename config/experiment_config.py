@@ -3,7 +3,7 @@ This module provides several dataclasses for configuration of experimentation
 details.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 from dataclasses import dataclass, field
 
 import gymnasium as gym
@@ -29,3 +29,5 @@ class ExperimentRunnerConfig:
     trainer_oracle_train_timesteps: int = 100000
     fp_rate: float = 0.05
     mia_train_test_split: float = 0.8
+    output_perturbation_stds: List[float] = field(default_factory=lambda: [0])
+    n_eval_trajectories: int = 2000 

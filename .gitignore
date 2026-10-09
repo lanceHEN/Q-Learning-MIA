@@ -208,3 +208,6 @@ __marimo__/
 
 .DS_Store
 MIA RL.pdf
+
+data/
+models/

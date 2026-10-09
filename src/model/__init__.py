@@ -7,8 +7,9 @@ from .trainer_oracle import (
 )
 from .cql_dqn import CQLDQN
 from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle
-from .mia import MIAClassifier, SARSAMIA
-from .generic_model import QLearner
+from .mia import MIAClassifier, ClusteringMIAClassifier, LRTMIAClassifier, SARSAMIA
+from .generic_model import QLearner, all_actions
+from .wrappers import TupleObsToBox, HIVTreatmentEnv, ChemotherapyEnv
 
 __all__ = [
     "TrainerOracle",
@@ -21,5 +22,11 @@ __all__ = [
     "DataOracle",
     "DeepOfflineTrainerOracle",
     "DeepOnlineTrainerOracle",
-    "CustomFixedPolicyDataOracle"
+    "CustomFixedPolicyDataOracle",
+    "TupleObsToBox",
+    "HIVTreatmentEnv",
+    "ChemotherapyEnv",
+    "ClusteringMIAClassifier",
+    "LRTMIAClassifier",
+    "all_actions"
 ]

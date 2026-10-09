@@ -57,6 +57,7 @@ class QLearnerDataOracleConfig(DataOracleConfig):
     learning_starts: int = 1000
     decay_rate: float = 0.999
     random_seed: int = 1
+    tau: float = 0.0
 
 @dataclass
 class DQNDataOracleConfig(DataOracleConfig):
@@ -68,6 +69,11 @@ class DQNDataOracleConfig(DataOracleConfig):
     buffer_size: int = 100000
     device: str = "auto"
     policy: str = "MlpPolicy"
+    policy_kwargs: dict = None
+    seed: int = None
+    target_update_interval: int = 1000
+    gamma: float = 0.99
+    tau: float = 0.0
 
 @dataclass
 class TrainerOracleConfig:
@@ -76,6 +82,8 @@ class TrainerOracleConfig:
     discount_factor: float = 0.999
     verbose: int = 0
     state_encoder: object = None
+    perturbation_std: float = 0.01
+    perturbation_dist: str = "laplace"
 
 @dataclass
 class QLearnerTrainerOracleConfig(TrainerOracleConfig):

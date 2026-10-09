@@ -6,9 +6,26 @@ from abc import ABC, abstractmethod
 
 import gymnasium as gym
 import numpy as np
+import itertools
+from gymnasium import spaces
+
 
 if TYPE_CHECKING:
     from config import QLearnerConfig
+
+
+def all_actions(space: spaces.Space) -> list:
+    """Enumerates every action of a finite Gymnasium space."""
+    if isinstance(space, spaces.Discrete):
+        return list(range(int(space.start), int(space.start + space.n)))
+    if isinstance(space, spaces.MultiDiscrete):
+        return [np.array(a) for a in itertools.product(*[range(int(n)) for n in space.nvec.flatten()])]
+    if isinstance(space, spaces.MultiBinary):
+        return [np.array(a) for a in itertools.product([0, 1], repeat=int(np.prod(space.shape)))]
+    if isinstance(space, spaces.Tuple):
+        return list(itertools.product(*[all_actions(s) for s in space.spaces]))
+    raise ValueError(f"Cannot enumerate {type(space).__name__}")
+
 
 class GenericModel(ABC):
     """
@@ -25,6 +42,7 @@ class GenericModel(ABC):
             state_encoder: Optional function to encode state
         """
         self.env = env
+        self.actions = all_actions(env.action_space)
         self.verbose = verbose
         self.state_encoder = state_encoder
     
@@ -53,12 +71,6 @@ class GenericModel(ABC):
             
         Returns:
             Union[int, Tuple]: Action for given state.
-        """
-        pass
-    
-    def reset(self):
-        """
-        Resets internal state back to its initial values.
         """
         pass
     
@@ -127,7 +139,27 @@ class GenericModel(ABC):
             
         return trajectories
     
-class QLearner(GenericModel):
+class QFunctionLearner(GenericModel, ABC):
+    """
+    Extends the GenericModel interface with additional abstract methods for
+    any class that wants to estimate Q values.
+    """
+    
+    @abstractmethod
+    def q_val(self, state: Union[int, Tuple], action: Union[int, Tuple]) -> float:
+        """
+        Produces Q value for the given state-action pair.
+        """
+        pass
+    
+    @abstractmethod
+    def reset(self):
+        """
+        Resets internal state back to its initial values.
+        """
+        pass
+    
+class QLearner(QFunctionLearner):
     """
     This class works to de-duplicate code between any common Q-learning implementations.
     """
@@ -155,6 +187,11 @@ class QLearner(GenericModel):
         
         self.epsilon = self.config.epsilon
         
+    def q_vals(self, state) -> Dict[Union[int, Tuple], float]:
+        return self.q_table[state]
+    
+    def q_val(self, state, action):
+        return self.q_table[state][action]
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
@@ -181,6 +218,5 @@ class QLearner(GenericModel):
         old_q = self.q_table[state][action]
         
         new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max(self.q_table[next_state].values(), default=0))
-
         
         self.q_table[state][action] = new_q

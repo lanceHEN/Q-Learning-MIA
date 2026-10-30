@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def all_actions(space: spaces.Space) -> list:
-    """Enumerates every action of a finite Gymnasium space."""
+    """Enumerates every action of a finite gym space."""
     if isinstance(space, spaces.Discrete):
         return list(range(int(space.start), int(space.start + space.n)))
     if isinstance(space, spaces.MultiDiscrete):
@@ -162,6 +162,8 @@ class QFunctionLearner(GenericModel, ABC):
 class QLearner(QFunctionLearner):
     """
     This class works to de-duplicate code between any common Q-learning implementations.
+    We also optionally let it have default values for unseen (s,a), for training or
+    inference. This is useful for our ensembling trainer oracle on tabular data.
     """
     
     def __init__(self, config: QLearnerConfig):
@@ -182,16 +184,24 @@ class QLearner(QFunctionLearner):
         self.q_table = defaultdict(lambda: defaultdict(float))
         self.replay_buffer = deque(maxlen=self.config.buffer_size)
         self.buffer_batch_size = self.config.buffer_batch_size
+        self.observed_pairs = set()
         
         self.discount_factor = self.config.discount_factor
         
         self.epsilon = self.config.epsilon
         
     def q_vals(self, state) -> Dict[Union[int, Tuple], float]:
-        return self.q_table[state]
+        # Dense over all actions, so unseen actions get unseen_inference_val even when they
+        # have no entry in the table; .get avoids inserting keys on lookup
+        qv = self.q_table.get(state, {})
+        return {a: qv.get(a, 0.0) if (state, a) in self.observed_pairs else self.config.unseen_inference_val
+                for a in self.actions}
     
     def q_val(self, state, action):
-        return self.q_table[state][action]
+        if (state, action) in self.observed_pairs:
+            return self.q_table[state][action]
+        else:
+            return self.config.unseen_inference_val
         
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         """
@@ -205,7 +215,7 @@ class QLearner(QFunctionLearner):
         """  
         return max(self.q_table[state], key=self.q_table[state].get) if self.q_table[state] else self.env.action_space.sample()
     
-    def _q_update(self, state: Union[int, Tuple], action: Union[int, Tuple], reward: float, next_state: Union[int, Tuple]) -> None:
+    def _q_update(self, state: Union[int, Tuple], action: Union[int, Tuple], reward: float, next_state: Union[int, Tuple], ) -> None:
         """
         Runs a standard Q learning update with the given (s,a,r,s') info.
         
@@ -215,8 +225,18 @@ class QLearner(QFunctionLearner):
             reward (float): Transition reward.
             next_state (Union[int, Tuple]): Next state.
         """
+        cfg = self.config
+        self.observed_pairs.add((state, action))
         old_q = self.q_table[state][action]
         
-        new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max(self.q_table[next_state].values(), default=0))
+        # Max over the next state's actions: trained values for actions observed at next_state,
+        # unseen_training_val for the rest. Terminal next states have no observed actions, so
+        # they also get unseen_training_val; keep it at 0 so terminal states are worth 0.
+        next_qv = self.q_table.get(next_state, {})
+        observed = [next_qv.get(a, 0.0) for a in self.actions if (next_state, a) in self.observed_pairs]
+        has_unseen = len(observed) < len(self.actions)
+        max_next_qv = max(observed + ([cfg.unseen_training_val] if has_unseen else []))
+        
+        new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max_next_qv)
         
         self.q_table[state][action] = new_q

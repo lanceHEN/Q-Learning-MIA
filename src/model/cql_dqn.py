@@ -8,21 +8,16 @@ class CQLDQN(DQN):
     """
     Conservative Q-Learning (CQL) for discrete action spaces, built on top of
     SB3's DQN. Adds a penalty term to the TD loss that pushes down Q-values
-    for actions not present in the replay buffer, mitigating the OOD
-    over-estimation problem in offline RL.
-
-    CQL penalty (discrete):
-        L_CQL = logsumexp_a Q(s, a) - Q(s, a_data)
-
-    Total loss:
-        L = L_TD + cql_alpha * L_CQL
-
+    for actions not present in the replay buffer.
     With cql_alpha=0 this reduces to standard DQN.
+    target_bounds, if given, clamps the bootstrap targets to the known range of returns,
+    so overestimation from the max over actions cannot compound along trajectories.
     """
 
-    def __init__(self, *args, cql_alpha: float = 1.0, **kwargs):
+    def __init__(self, *args, cql_alpha: float = 1.0, target_bounds=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.cql_alpha = cql_alpha
+        self.target_bounds = target_bounds
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         self.policy.set_training_mode(True)
@@ -38,6 +33,8 @@ class CQLDQN(DQN):
                 next_q_values, _ = next_q_values.max(dim=1)
                 next_q_values = next_q_values.reshape(-1, 1)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * discounts * next_q_values
+                if self.target_bounds is not None:
+                    target_q_values = target_q_values.clamp(*self.target_bounds)
 
             # All Q-values for the current observations: [batch, n_actions]
             all_q_values = self.q_net(replay_data.observations)
@@ -45,11 +42,8 @@ class CQLDQN(DQN):
             # Q-value for the action taken (in the dataset): [batch, 1]
             current_q_values = th.gather(all_q_values, dim=1, index=replay_data.actions.long())
 
-            # TD loss
             td_loss = F.smooth_l1_loss(current_q_values, target_q_values)
 
-            # CQL penalty: penalise Q-values for all actions relative to the
-            # dataset action, discouraging over-estimation of unseen actions.
             cql_loss = (th.logsumexp(all_q_values, dim=1) - current_q_values.squeeze(1)).mean()
 
             loss = td_loss + self.cql_alpha * cql_loss

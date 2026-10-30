@@ -23,25 +23,30 @@ class MIAClassifier:
         """
         self.trainer_oracle = trainer_oracle
     
-    def _traj_membership_score(self, traj: List[Tuple]) -> Tuple[float, np.ndarray]:
+    def _traj_membership_score(self, traj: List[Tuple]) -> Tuple[float, np.ndarray, np.ndarray]:
         """
         Computes the average squared Bellman residual over the transitions, along
-        with the array of raw residuals.
+        with the array of raw residuals, and the array of raw q_values for each action
+        taken.
         """
-        residuals = self._residuals(traj)        
-        return np.mean((residuals**2)), residuals
+        residuals, q_vals = self._residuals(traj)        
+        return np.mean((residuals**2)), residuals, q_vals
     
-    def _residuals(self, traj: List[Tuple]) -> np.ndarray:
+    def _residuals(self, traj: List[Tuple]) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Computes the array of Bellman residuals over the transitions.
+        Computes the array of Bellman residuals over the transitions, along with
+        raw q values.
         """
         residuals = []
+        q_vals = []
         gamma = self.trainer_oracle.discount_factor
         for (state, action, reward, next_state) in traj:
             max_next_val = self.trainer_oracle.optimal_state_val(next_state)
             q_val = self.trainer_oracle.q_val(state, action)
             residuals.append(reward + gamma * max_next_val - q_val)
-        return np.array(residuals)
+            q_vals.append(q_val)
+            
+        return np.array(residuals), np.array(q_vals)
     
     @abstractmethod
     def predict_membership(self, traj: List[Tuple]) -> int:
@@ -51,12 +56,15 @@ class MIAClassifier:
         """
         pass
     
-    def predict_memberships(self, trajs: List[List[Tuple]]) -> np.ndarray:
+    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray]]:
         """
-        Predicts membership for each trajectory. Returns a binary array with 1
-        for members and 0 for non-members.
+        Predicts membership for each trajectory. Returns a tuple containing
+        (1) a binary array with 1 for members and 0 for non-members,
+        (2) an array of scores for each trajectory,
+        (3) a list of residuals (each a numpy array of varying length) for each trajectory.
+        (4) a list of q values (each a numpy array of varying length) for each trajectory.
         """
-        return np.array([self.predict_membership(traj) for traj in trajs])
+        pass
     
     @staticmethod
     def plot_residuals(member_residuals, nonmember_residuals, experiment_name):
@@ -123,10 +131,12 @@ class MIAClassifier:
         plt.close(fig)
     
     @staticmethod
-    def roc_auc(labels, all_scores, experiment_name):
-        """ROC curve (scored by raw score, lower = more likely member). Returns AUC."""
+    def roc_auc(labels, all_scores, experiment_name, save_plot: bool = True):
+        """ROC curve (scored by raw score, lower = more likely member). Returns AUC; saves the curve if save_plot."""
         fpr, tpr, _ = roc_curve(labels, -np.array(all_scores))
         roc_auc_val = auc(fpr, tpr)
+        if not save_plot:
+            return roc_auc_val
 
         plt.figure()
         plt.plot(fpr, tpr, label=f"AUC = {roc_auc_val:.3f}")
@@ -165,23 +175,19 @@ class ClusteringMIAClassifier(MIAClassifier):
 
         return self.clusters.predict([[score]]).item()
     
-    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-        """
-        Predicts membership for each trajectory. Returns a tuple containing
-        (1) a binary array with 1 for members and 0 for non-members,
-        (2) an array of scores for each trajectory,
-        (3) a list of residuals (each a numpy array of varying length) for each trajectory.
-        """
+    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray]]:
         scores = []
         residuals = []
+        q_vals = []
         for traj in trajs:
-            score, res = self._traj_membership_score(traj)
+            score, res, qv = self._traj_membership_score(traj)
             scores.append(score)
             residuals.append(res)
+            q_vals.append(qv)
         
         scores = np.array(scores)
-        # Note: residuals may have different lengths between each trajectory,
-        # so we keep them as a list (converting to 2d numpy is impossible w/ different dims)
+        # Note: residuals and q_vals may have different lengths between each trajectory,
+        # so we keep them as lists (converting to 2d numpy is impossible w/ different dims)
         
         self.clusters = KMeans(n_clusters=2, random_state=0)
         self.clusters.fit(scores.reshape(-1,1))
@@ -191,7 +197,7 @@ class ClusteringMIAClassifier(MIAClassifier):
         if labels[smallest_idx] == 0:
             labels = 1 - labels
         
-        return labels, scores, residuals
+        return labels, scores, residuals, q_vals
 
 class LRTMIAClassifier(MIAClassifier):
     """
@@ -204,14 +210,6 @@ class LRTMIAClassifier(MIAClassifier):
         self.eta = None
         self.kde0 = None
         self.kde1 = None
-
-    def _traj_membership_score(self, traj: List[Tuple]) -> Tuple[float, np.ndarray]:
-        """
-        Computes the average squared Bellman residual over the transitions, along
-        with the array of raw residuals.
-        """
-        residuals = self._residuals(traj)        
-        return np.mean((residuals**2)), residuals
 
     def _log_likelihood_ratio(self, score):
         p1 = max(float(self.kde1(score)), 1e-300)
@@ -231,6 +229,25 @@ class LRTMIAClassifier(MIAClassifier):
         score, _ = self._traj_membership_score(traj)
         ratio = self._log_likelihood_ratio(score)
         return int(ratio > self.eta)
+    
+    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray]]:
+        labels = []
+        scores = []
+        residuals = []
+        q_vals = []
+        for traj in trajs:
+            score, res, qv = self._traj_membership_score(traj)
+            labels.append(self.predict_membership(traj))
+            scores.append(score)
+            residuals.append(res)
+            q_vals.append(qv)
+            
+        scores = np.array(scores)
+        labels = np.array(labels)
+        # Note: residuals and q_vals may have different lengths between each trajectory,
+        # so we keep them as lists (converting to 2d numpy is impossible w/ different dims)
+
+        return labels, scores, residuals, q_vals
 
     def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float, experiment_name: str) -> None:
         """

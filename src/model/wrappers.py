@@ -30,6 +30,43 @@ class TupleObsToBox(gym.ObservationWrapper):
     def observation(self, obs) -> np.ndarray:
         return np.array(obs, dtype=np.float32)
 
+class SepsisStateVectorObs(gym.ObservationWrapper):
+    """
+    Replaces ICU-Sepsis's integer state with a feature vector: the state's cluster center
+    (47 normalized patient features from the AI Clinician pipeline, in the order of
+    icu_sepsis_helpers.mdp_creation.create_rl_table: 4 binary indicators minus 0.5, 32
+    z-scored, 11 z-scored after log(x + 0.1)), followed by one indicator per terminal
+    state. The indicators are needed because the terminal states' cluster centers are all
+    zero, which would make death, survival, and an average patient indistinguishable.
+
+    encode() gives the same vector as a hashable tuple, for trajectories generated on the
+    integer environment (see FeatureMappedDataOracle). is_terminal_obs() lets the deep
+    trainer oracles recognize terminal states from their vectors.
+    """
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        from icu_sepsis.utils.constants import STATES_TERMINAL
+        unwrapped = env.unwrapped
+        centers = np.asarray(unwrapped.state_cluster_centers, dtype=np.float32) # 716 * 47
+        self.terminal_states = sorted(STATES_TERMINAL) # integers
+        indicators = np.zeros((len(centers), len(self.terminal_states)), dtype=np.float32) # 716 * 3
+        for i, state in enumerate(self.terminal_states):
+            indicators[state, i] = 1.0
+        self.features = np.hstack([centers, indicators]) # 716 * 50
+        self.n_center_features = centers.shape[1]
+        self.observation_space = spaces.Box(
+            low=self.features.min(axis=0), high=self.features.max(axis=0), dtype=np.float32)
+
+    def observation(self, obs) -> np.ndarray:
+        return self.features[int(obs)]
+
+    def encode(self, state: int) -> tuple:
+        return tuple(float(x) for x in self.features[int(state)])
+
+    def is_terminal_obs(self, obs) -> bool:
+        return bool(np.asarray(obs, dtype=np.float32).flatten()[self.n_center_features:].max() > 0.5)
+
 class ChemotherapyEnv(gym.Env):
     """
     Cancer chemotherapy dosing on a four-variable tumor-immune-normal-cell ODE:

@@ -2,14 +2,16 @@ from .trainer_oracle import (
     TrainerOracle,
     QLearnerTrainerOracle,
     DeepTrainerOracle,
-    DeepOfflineTrainerOracle,
-    DeepOnlineTrainerOracle
+    DeepDiscretizingTrainerOracle,
+    EnsemblingTrainerOracle,
+    DPAVIVITrainerOracle,
+    DPSGDTrainerOracle
 )
 from .cql_dqn import CQLDQN
-from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle
+from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle, FeatureMappedDataOracle
 from .mia import MIAClassifier, ClusteringMIAClassifier, LRTMIAClassifier, SARSAMIA
 from .generic_model import QLearner, all_actions
-from .wrappers import TupleObsToBox, HIVTreatmentEnv, ChemotherapyEnv
+from .wrappers import TupleObsToBox, HIVTreatmentEnv, ChemotherapyEnv, SepsisStateVectorObs
 
 __all__ = [
     "TrainerOracle",
@@ -20,13 +22,18 @@ __all__ = [
     "QLearner",
     "DQNDataOracle",
     "DataOracle",
-    "DeepOfflineTrainerOracle",
-    "DeepOnlineTrainerOracle",
+    "DeepTrainerOracle",
+    "DeepDiscretizingTrainerOracle",
     "CustomFixedPolicyDataOracle",
     "TupleObsToBox",
     "HIVTreatmentEnv",
     "ChemotherapyEnv",
+    "SepsisStateVectorObs",
+    "FeatureMappedDataOracle",
     "ClusteringMIAClassifier",
     "LRTMIAClassifier",
-    "all_actions"
+    "all_actions",
+    "EnsemblingTrainerOracle",
+    "DPAVIVITrainerOracle",
+    "DPSGDTrainerOracle"
 ]

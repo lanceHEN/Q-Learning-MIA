@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Union, TYPE_CHECKING
+import pickle
 import random
 from collections import defaultdict, deque
 
@@ -73,6 +74,16 @@ class QLearnerDataOracle(DataOracle):
 
     def reset(self):
         self.q_learner.reset()
+
+    def save(self, path):
+        with open(path, "wb") as f:
+            pickle.dump({s: dict(qs) for s, qs in self.q_learner.q_table.items()}, f)
+
+    def load(self, path):
+        with open(path, "rb") as f:
+            q_table = pickle.load(f)
+        self.q_learner.q_table = defaultdict(lambda: defaultdict(float),
+                                             {s: defaultdict(float, qs) for s, qs in q_table.items()})
         
     def q_vector(self, state: Union[int, Tuple]):
         q = self.q_learner.q_table.get(state, {})
@@ -168,3 +179,20 @@ class DQNDataOracle(DataOracle):
         Trains self for the given number of learning timesteps.
         """
         self.dqn.learn(total_timesteps=learn_timesteps, callback=ProgressBarCallback())
+
+
+class FeatureMappedDataOracle:
+    """
+    Wraps a data oracle, mapping every state in its trajectories through feature_fn
+    (e.g. SepsisStateVectorObs.encode). The behaviour policy still acts on the original
+    states, so a tabular data oracle can generate data for a learner that sees features.
+    """
+
+    def __init__(self, base_oracle: DataOracle, feature_fn):
+        self.base_oracle = base_oracle
+        self.feature_fn = feature_fn
+
+    def generate_trajectories(self, n_trajectories: int, T_max: int, seed: int = None) -> List[List[Tuple]]:
+        f = self.feature_fn
+        return [[(f(s), a, r, f(s2)) for s, a, r, s2 in traj]
+                for traj in self.base_oracle.generate_trajectories(n_trajectories, T_max, seed)]

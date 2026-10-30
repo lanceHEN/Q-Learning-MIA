@@ -4,11 +4,12 @@ components in the MIA pipeline.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, List, Optional, Tuple
 
 import gymnasium as gym
+import numpy as np
 
-from src.model import QLearner, DataOracle
+from src.model import QLearner, DataOracle, TrainerOracle
 
 @dataclass
 class QLearnerConfig:
@@ -23,6 +24,8 @@ class QLearnerConfig:
     discount_factor: float = 0.999
     epsilon: float = 1
     state_encoder: object = None
+    unseen_training_val: float = 0 # what value to assign to unseen (s,a) pairs (per submodel) in training
+    unseen_inference_val: float = 0.0 # wwhat value to assign to unseen (s,a) pairs (per submodel) in inference
 
 @dataclass
 class DataOracleConfig:
@@ -82,8 +85,6 @@ class TrainerOracleConfig:
     discount_factor: float = 0.999
     verbose: int = 0
     state_encoder: object = None
-    perturbation_std: float = 0.01
-    perturbation_dist: str = "laplace"
 
 @dataclass
 class QLearnerTrainerOracleConfig(TrainerOracleConfig):
@@ -101,17 +102,70 @@ class DeepTrainerOracleConfig(TrainerOracleConfig):
     gamma: float = 0.999
     device: str = "auto"
     policy: str = "MlpPolicy"
-
-@dataclass
-class DeepOfflineTrainerOracleConfig(DeepTrainerOracleConfig):
     data_oracle: Optional[DataOracle] = None
-    gradient_steps: int = 500_000
     cql_alpha: float = 0.0      # 0 = standard DQN, >0 = CQL penalty
-    tau: float = 0.005          # soft target update coefficient; 1.0 = hard copy each chunk
+    target_bounds: Optional[Tuple[float, float]] = None  # clamp bootstrap targets to the range of returns; None = no clamping
+    target_updates: int = 30
+    net_arch: Optional[List[int]] = None  # hidden layer sizes of the Q-network; None = SB3's default [64, 64]
 
 @dataclass
-class DeepOnlineTrainerOracleConfig(DeepTrainerOracleConfig):
-    pass
+class DeepDiscretizingTrainerOracleConfig(DeepTrainerOracleConfig):
+    """
+    DQN whose released Q function is a table over a fixed grid of states. Discrete state
+    spaces use their own states as the grid. Noise-free; use as an EnsemblingTrainerOracle
+    sub-model for a DP guarantee.
+    """
+    points: Optional[np.ndarray] = None  # (n_cells, obs_dim) public points to release Q values for; required for continuous spaces
+
+@dataclass
+class DPSGDTrainerOracleConfig(TrainerOracleConfig):
+    """
+    Offline DQN (optionally CQL) trained with DP-SGD via Opacus, with one trajectory as
+    the privacy unit. discount_factor is used both for the TD targets and by the attack.
+    The number of epochs comes from the experiment runner (trainer_oracle_epochs).
+    """
+    data_oracle: Optional[DataOracle] = None
+    hidden_sizes: Tuple[int, ...] = (64, 64)
+    learning_rate: float = 1e-3
+    batch_size: int = 64                 
+    target_updates: int = 30
+    cql_alpha: float = 0.0               
+    target_bounds: Optional[Tuple[float, float]] = None  # clamp bootstrap targets to the range of returns; None = no clamping
+    trajectory_loss: str = "sum" # how to aggregate over individual transition losses
+    max_grad_norm: float = 1.0          
+    epsilon: Optional[float] = 10.0      
+    delta: float = 1e-5                 
+    neighboring_relation: str = "replace_one" 
+    accountant: str = "prv"
+    device: str = "cpu"
+
+@dataclass
+class EnsemblingTrainerOracleConfig(TrainerOracleConfig):
+    data_oracle: Optional[DataOracle] = None
+    k: int = 2
+    trainer_factory: Optional[Callable[[], TrainerOracle]] = None  # builds a fresh, independent sub-oracle
+    q_bounds: Tuple[float, float] = (0.0, 1.0)
+    epsilon: Optional[float] = 1.0 
+    delta: float = 1e-5
+
+@dataclass
+class DPAVIVITrainerOracleConfig(TrainerOracleConfig):
+    """
+    Noisy counts -> pessimistic value iteration (DP-APVI, Qiao & Wang 2023, Algorithm 1),
+    with Gaussian noise for (epsilon, delta)-DP. failure_prob is the confidence bounds'
+    failure probability (Algorithm 1's delta), which is separate from the DP delta. Set
+    discount_factor to match the learner, since the attack reads it from here.
+    """
+    data_oracle: Optional[DataOracle] = None
+    epsilon: Optional[float] = 1000.0
+    delta: float = 1e-5 
+    T_max: int = 50   
+    public_support: Optional[object] = None 
+    C: float = 2.0            
+    failure_prob: float = 0.05        
+    value_bound: Optional[float] = None 
+    penalty_scale: float = 1.0    
+    consistency_solver: str = "closed_form"
 
 @dataclass
 class SARSAMIAConfig:

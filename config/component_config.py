@@ -3,7 +3,7 @@ This module provides several dataclasses for modular configuration of different
 components in the MIA pipeline.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 import gymnasium as gym
@@ -37,13 +37,6 @@ class DataOracleConfig:
     state_encoder: object = None
 
 @dataclass
-class RandomDataOracleConfig(DataOracleConfig):
-    """
-    Stores config info for RandomDataOracle.
-    """
-    pass
-
-@dataclass
 class CustomFixedPolicyDataOracleConfig(DataOracleConfig):
     """
     Stores config info for CustomFixedPolicyDataOracle.
@@ -59,6 +52,7 @@ class QLearnerDataOracleConfig(DataOracleConfig):
     q_learner: Optional[QLearner] = None
     learning_starts: int = 1000
     decay_rate: float = 0.999
+    alpha_decay_rate: float = 1.0  # multiplies the Q-learner's learning rate after every training step; 1 = constant
     random_seed: int = 1
     tau: float = 0.0
 
@@ -81,7 +75,6 @@ class DQNDataOracleConfig(DataOracleConfig):
 @dataclass
 class TrainerOracleConfig:
     env: gym.Env
-    alpha: float = 0.0001
     discount_factor: float = 0.999
     verbose: int = 0
     state_encoder: object = None
@@ -89,7 +82,8 @@ class TrainerOracleConfig:
 @dataclass
 class QLearnerTrainerOracleConfig(TrainerOracleConfig):
     """
-    Stores config info for QLearnerTrainerOracle.
+    Stores config info for QLearnerTrainerOracle. The learning rate and discount factor
+    are q_learner's; discount_factor must match q_learner's.
     """
     data_oracle: Optional[DataOracle] = None
     q_learner: Optional[QLearner] = None
@@ -99,14 +93,13 @@ class DeepTrainerOracleConfig(TrainerOracleConfig):
     learning_rate: float = 0.0005
     batch_size: int = 32
     buffer_size: int = 10000000
-    gamma: float = 0.999
     device: str = "auto"
     policy: str = "MlpPolicy"
     data_oracle: Optional[DataOracle] = None
-    cql_alpha: float = 0.0      # 0 = standard DQN, >0 = CQL penalty
-    target_bounds: Optional[Tuple[float, float]] = None  # clamp bootstrap targets to the range of returns; None = no clamping
+    cql_alpha: float = 0.0 # 0 = standard DQN, >0 = CQL penalty
+    target_bounds: Optional[Tuple[float, float]] = None # clamp bootstrap targets to the range of returns; None = no clamping
     target_updates: int = 30
-    net_arch: Optional[List[int]] = None  # hidden layer sizes of the Q-network; None = SB3's default [64, 64]
+    net_arch: Optional[List[int]] = None # hidden layer sizes of the Q-network; None = SB3's default [64, 64]
 
 @dataclass
 class DeepDiscretizingTrainerOracleConfig(DeepTrainerOracleConfig):
@@ -115,7 +108,7 @@ class DeepDiscretizingTrainerOracleConfig(DeepTrainerOracleConfig):
     spaces use their own states as the grid. Noise-free; use as an EnsemblingTrainerOracle
     sub-model for a DP guarantee.
     """
-    points: Optional[np.ndarray] = None  # (n_cells, obs_dim) public points to release Q values for; required for continuous spaces
+    points: Optional[np.ndarray] = None # (n_cells, obs_dim) public points to release Q values for; None on a continuous space queries the network at the exact observation (no table, so no DP release)
 
 @dataclass
 class DPSGDTrainerOracleConfig(TrainerOracleConfig):
@@ -130,13 +123,13 @@ class DPSGDTrainerOracleConfig(TrainerOracleConfig):
     batch_size: int = 64                 
     target_updates: int = 30
     cql_alpha: float = 0.0               
-    target_bounds: Optional[Tuple[float, float]] = None  # clamp bootstrap targets to the range of returns; None = no clamping
+    target_bounds: Optional[Tuple[float, float]] = None # clamp bootstrap targets to the range of returns; None = no clamping
     trajectory_loss: str = "sum" # how to aggregate over individual transition losses
     max_grad_norm: float = 1.0          
     epsilon: Optional[float] = 10.0      
     delta: float = 1e-5                 
     neighboring_relation: str = "replace_one" 
-    accountant: str = "prv"
+    accountant: str = "prv" # Opacus accountant, used only with add_or_remove_one; replace_one uses dp_accounting's PLD accountant
     device: str = "cpu"
 
 @dataclass
@@ -151,7 +144,7 @@ class EnsemblingTrainerOracleConfig(TrainerOracleConfig):
 @dataclass
 class DPAVIVITrainerOracleConfig(TrainerOracleConfig):
     """
-    Noisy counts -> pessimistic value iteration (DP-APVI, Qiao & Wang 2023, Algorithm 1),
+    Noisy counts -> pessimistic value iteration (DP-APVI, Qiao & Wang 2022, Algorithm 1),
     with Gaussian noise for (epsilon, delta)-DP. failure_prob is the confidence bounds'
     failure probability (Algorithm 1's delta), which is separate from the DP delta. Set
     discount_factor to match the learner, since the attack reads it from here.
@@ -161,20 +154,9 @@ class DPAVIVITrainerOracleConfig(TrainerOracleConfig):
     delta: float = 1e-5 
     T_max: int = 50   
     public_support: Optional[object] = None 
+    reward_table: Optional[object] = None  # public reward model, S x S' or S x A x S'; None: the environment's own (ICU-Sepsis's _r_mat)
     C: float = 2.0            
     failure_prob: float = 0.05        
     value_bound: Optional[float] = None 
     penalty_scale: float = 1.0    
     consistency_solver: str = "closed_form"
-
-@dataclass
-class SARSAMIAConfig:
-    """
-    Stores config info for SARSAMIA.
-    """
-    alpha: float = 0.0001
-    discount_factor: float = 0.999
-    n_trajectories: int = 1000
-    n_epochs: int = 10
-    T_max: int = 100
-    seed: int = None

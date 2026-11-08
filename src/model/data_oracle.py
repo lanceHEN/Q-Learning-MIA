@@ -12,7 +12,7 @@ from stable_baselines3.common.callbacks import ProgressBarCallback
 import torch
 
 if TYPE_CHECKING:
-    from config import (RandomDataOracleConfig,
+    from config import (DataOracleConfig,
                         QLearnerDataOracleConfig,
                         DQNDataOracleConfig,
                         CustomFixedPolicyDataOracleConfig)
@@ -24,8 +24,7 @@ class DataOracle(GenericModel):
     This class provides no additional functionality beyond the GenericModel.
     It exists only for type-checking purposes.
     """
-    
-    
+
     def _select_action_from_q_vals(self, q_vals, tau):
         """Selects action based on q values via softmax w/ temp tau."""
         if tau <= 0:
@@ -40,8 +39,9 @@ class RandomDataOracle(DataOracle):
     A Data Oracle implementation with a random policy.
     """
 
-    def __init__(self, config: RandomDataOracleConfig):
+    def __init__(self, config: DataOracleConfig):
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
+        self.config = config
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         return self.env.action_space.sample()
@@ -54,10 +54,10 @@ class CustomFixedPolicyDataOracle(DataOracle):
 
     def __init__(self, config: CustomFixedPolicyDataOracleConfig):
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
-        self.action_selector = config.action_selector
+        self.config = config
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
-        return self.action_selector(state)
+        return self.config.action_selector(state)
 
 class QLearnerDataOracle(DataOracle):
     """
@@ -66,10 +66,8 @@ class QLearnerDataOracle(DataOracle):
 
     def __init__(self, config: QLearnerDataOracleConfig):
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
+        self.config = config
         self.q_learner = config.q_learner
-        self.learning_starts = config.learning_starts
-        self.decay_rate = config.decay_rate
-        self.tau = config.tau
         random.seed(config.random_seed)
 
     def reset(self):
@@ -91,7 +89,7 @@ class QLearnerDataOracle(DataOracle):
 
     def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
         q_vals = self.q_vector(state)
-        return self._select_action_from_q_vals(q_vals, self.tau)
+        return self._select_action_from_q_vals(q_vals, self.config.tau)
 
     def _select_action_epsilon_greedy(self, state):
         if random.random() < self.q_learner.epsilon:
@@ -110,10 +108,11 @@ class QLearnerDataOracle(DataOracle):
 
         for t in range(learn_timesteps):
             action = self._select_action_epsilon_greedy(self._encode_state(state))
-            next_state, reward, done, _, _ = self.env.step(action)
+            next_state, reward, terminated, truncated, _ = self.env.step(action)
+            done = terminated or truncated  # time-limited episodes (e.g. GlucoseEnv) end by truncation
             self.q_learner.replay_buffer.append((self._encode_state(state), action, reward, self._encode_state(next_state)))
 
-            if t >= self.learning_starts:
+            if t >= self.config.learning_starts:
                 transition = random.choice(self.q_learner.replay_buffer)
                 self.q_learner._q_update(*transition)
 
@@ -123,7 +122,8 @@ class QLearnerDataOracle(DataOracle):
             else:
                 state = next_state
 
-            self.q_learner.epsilon *= self.decay_rate
+            self.q_learner.epsilon *= self.config.decay_rate
+            self.q_learner.alpha *= self.config.alpha_decay_rate
 
         if self.verbose:
             print("Finished training")
@@ -179,6 +179,23 @@ class DQNDataOracle(DataOracle):
         Trains self for the given number of learning timesteps.
         """
         self.dqn.learn(total_timesteps=learn_timesteps, callback=ProgressBarCallback())
+
+
+class DiscretizedPolicyDataOracle(DataOracle):
+    """
+    Runs a tabular data oracle's policy on an environment with richer observations: each
+    observation is mapped to the oracle's state by state_fn to choose the action, while the
+    trajectories keep the observations (e.g. a Q-learner trained on GlucoseDiscreteObs
+    generating data for learners that see GlucoseEnv's continuous observations).
+    """
+
+    def __init__(self, base_oracle: DataOracle, env: gym.Env, state_fn):
+        super().__init__(env=env)
+        self.base_oracle = base_oracle
+        self.state_fn = state_fn
+
+    def _select_action(self, state: Union[int, Tuple]) -> Union[int, Tuple]:
+        return self.base_oracle._select_action(self.state_fn(state))
 
 
 class FeatureMappedDataOracle:

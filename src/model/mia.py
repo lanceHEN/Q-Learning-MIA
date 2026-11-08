@@ -1,5 +1,4 @@
-from typing import List, Tuple, Union
-from collections import defaultdict
+from typing import List, Tuple
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -95,39 +94,34 @@ class MIAClassifier:
         plt.close(fig)
         
     @staticmethod
-    def plot_scores(member_scores, nonmember_scores, experiment_name):
-        """Member vs non-member scores as parallel strip plots sharing the x-axis."""
+    def draw_score_strip(ax, scores, color, title, rng):
+        """One group's scores as a jittered strip on ax, with a dashed line at their mean."""
+        ax.scatter(
+            scores,
+            rng.uniform(-0.4, 0.4, len(scores)),
+            color=color, alpha=0.8, s=16, linewidths=0,
+        )
+        ax.axvline(scores.mean(), color=color, linestyle='--', linewidth=1.2)
+        ax.set_title(title)
+        ax.set_yticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+    @staticmethod
+    def plot_scores(member_scores, nonmember_scores, experiment_name, title='Membership Score Distributions', xlim=None):
+        """Member vs non-member scores as parallel strip plots sharing the x-axis (limits xlim if given)."""
         rng = np.random.default_rng(0)
         fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(7, 4), sharex=True)
-
-        ax_top.scatter(
-            member_scores,
-            rng.uniform(-0.4, 0.4, len(member_scores)),
-            color='steelblue', alpha=0.4, s=8, linewidths=0,
-        )
-        ax_top.axvline(member_scores.mean(), color='steelblue', linestyle='--', linewidth=1.2)
-        ax_top.set_title('Member')
-        ax_top.set_yticks([])
-        ax_top.spines['top'].set_visible(False)
-        ax_top.spines['right'].set_visible(False)
-        ax_top.spines['left'].set_visible(False)
-
-        ax_bot.scatter(
-            nonmember_scores,
-            rng.uniform(-0.4, 0.4, len(nonmember_scores)),
-            color='coral', alpha=0.4, s=8, linewidths=0,
-        )
-        ax_bot.axvline(nonmember_scores.mean(), color='coral', linestyle='--', linewidth=1.2)
-        ax_bot.set_title('Non-member')
-        ax_bot.set_yticks([])
+        MIAClassifier.draw_score_strip(ax_top, member_scores, 'steelblue', 'Member', rng)
+        MIAClassifier.draw_score_strip(ax_bot, nonmember_scores, 'coral', 'Non-member', rng)
         ax_bot.set_xlabel('Membership Score (Mean Squared Bellman Residual)')
-        ax_bot.spines['top'].set_visible(False)
-        ax_bot.spines['right'].set_visible(False)
-        ax_bot.spines['left'].set_visible(False)
+        if xlim is not None:
+            ax_bot.set_xlim(*xlim)
 
-        fig.suptitle('Membership Score Distributions', y=1.01)
+        fig.suptitle(title, y=1.01)
         fig.tight_layout()
-        fig.savefig(f"data/plots/member_nonmember_scores/{experiment_name}_score_hist.png", dpi=150)
+        fig.savefig(f"data/plots/member_nonmember_scores/{experiment_name}_score_hist.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
     
     @staticmethod
@@ -284,31 +278,3 @@ class LRTMIAClassifier(MIAClassifier):
         fp_rates, _, thresholds = roc_curve(labels, log_lr_scores)
         threshold_idx = np.argmin(abs(fp_rates - fp_rate))
         self.eta = thresholds[threshold_idx]
-
-class SARSAMIA(MIAClassifier):
-
-    def __init__(self, trainer_oracle: TrainerOracle, alpha: float = 0.001, discount_factor: float = 0.999):
-        super().__init__(trainer_oracle)
-        self.q_table = defaultdict(lambda: defaultdict(float))
-        self.alpha = alpha
-        self.discount_factor = discount_factor
-
-    def _sarsa_update(self, state: Union[int, Tuple], action: Union[int, Tuple],
-                      reward: float, next_state: Union[int, Tuple], next_action: Union[int, Tuple]) -> None:
-        old_q = self.q_table[state][action]
-        new_q = (1 - self.alpha) * old_q + self.alpha * (reward + self.discount_factor * self.q_table[next_state][next_action])
-        self.q_table[state][action] = new_q
-
-    def train(self, n_trajectories: int, n_epochs: int, T_max: int, seed: int = None):
-        """
-        Runs SARSA on trajectories from the trainer oracle for the given number of epochs.
-        """
-        trainer_oracle_trajs = self.trainer_oracle.generate_trajectories(
-            n_trajectories=n_trajectories, T_max=T_max, seed=seed
-        )
-
-        for epoch in range(n_epochs):
-            for traj in trainer_oracle_trajs:
-                for i, (state, action, reward, next_state) in enumerate(traj):
-                    next_action = traj[i + 1][1] if i < len(traj) - 1 else None
-                    self._sarsa_update(state, action, reward, next_state, next_action)

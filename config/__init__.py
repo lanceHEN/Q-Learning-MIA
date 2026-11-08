@@ -1,6 +1,6 @@
 from .component_config import (
     TrainerOracleConfig, QLearnerTrainerOracleConfig, DeepTrainerOracleConfig,
-    RandomDataOracleConfig, QLearnerDataOracleConfig, SARSAMIAConfig,
+    QLearnerDataOracleConfig,
     QLearnerConfig, DataOracleConfig, DQNDataOracleConfig,
     CustomFixedPolicyDataOracleConfig, EnsemblingTrainerOracleConfig,
     DPAVIVITrainerOracleConfig, DeepDiscretizingTrainerOracleConfig, DPSGDTrainerOracleConfig
@@ -12,12 +12,9 @@ __all__ = [
     "TrainerOracleConfig",
     "QLearnerTrainerOracleConfig",
     "DeepTrainerOracleConfig",
-    "RandomDataOracleConfig",
     "QLearnerDataOracleConfig",
     "ExperimentRunnerConfig",
-    "SARSAMIAConfig",
     "QLearnerConfig",
-    "DQNConfig",
     "DataOracleConfig",
     "DQNDataOracleConfig",
     "CustomFixedPolicyDataOracleConfig",

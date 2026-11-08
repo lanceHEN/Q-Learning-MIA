@@ -33,6 +33,17 @@ if TYPE_CHECKING:
 from .generic_model import QFunctionLearner
 
 
+def ends_episode(env: gym.Env, traj: List[Tuple]) -> bool:
+    """
+    Whether a trajectory's last step ends its episode, so learners should not bootstrap
+    from its next state. Environments with a time limit (env.unwrapped.time_limit, e.g.
+    GlucoseEnv) truncate episodes that reach it: the last step is an ordinary transition and
+    learners bootstrap through it. A trajectory that stops earlier was terminated.
+    """
+    time_limit = getattr(env.unwrapped, "time_limit", None)
+    return time_limit is None or len(traj) < time_limit
+
+
 class TrainerOracle(QFunctionLearner):
     """
     Abstract class for Trainer Oracle implementations, including
@@ -42,8 +53,11 @@ class TrainerOracle(QFunctionLearner):
     def __init__(self, config: TrainerOracleConfig):
         super().__init__(config.env, config.verbose, config.state_encoder)
         self.config = config
-        self.alpha = config.alpha
-        self.discount_factor = config.discount_factor
+
+    @property
+    def discount_factor(self) -> float:
+        """The learner's discount factor, which the attack also uses."""
+        return self.config.discount_factor
 
     @abstractmethod
     def train(
@@ -119,8 +133,16 @@ class TrainerOracle(QFunctionLearner):
         )
 
     def _select_action(self, state):
+        """
+        Greedy action, with ties broken at random. In states absent from the training data
+        every action has the unseen value, and always taking the first action there can trap
+        the policy (in GlucoseEnv, no insulin, which leads to ever less familiar states).
+        """
         q_vals = self.q_vals(state)
-        return max(q_vals, key=q_vals.get) if q_vals else self.env.action_space.sample()
+        if not q_vals:
+            return self.env.action_space.sample()
+        best = max(q_vals.values())
+        return random.choice([a for a, v in q_vals.items() if v == best])
 
     @abstractmethod
     def _released_q_vals(self, state) -> Dict[Union[int, Tuple], float]:
@@ -151,6 +173,11 @@ class QLearnerTrainerOracle(TrainerOracle):
         NOTE: The Data Oracle should be trained before being fed in.
         """
         super().__init__(config)
+        if config.discount_factor != config.q_learner.config.discount_factor:
+            raise ValueError(
+                f"discount_factor {config.discount_factor} must match the Q-learner's "
+                f"{config.q_learner.config.discount_factor}, since the attack uses it"
+            )
         self.data_oracle = config.data_oracle
         self.q_learner = config.q_learner
         self.reset()
@@ -239,7 +266,7 @@ class DeepTrainerOracle(TrainerOracle):
             learning_rate=cfg.learning_rate,
             batch_size=cfg.batch_size,
             buffer_size=cfg.buffer_size,
-            gamma=cfg.gamma,
+            gamma=cfg.discount_factor,
             device=cfg.device,
         )
         if cfg.net_arch is not None:
@@ -294,8 +321,9 @@ class DeepTrainerOracle(TrainerOracle):
 
         obs_shape = self.dqn.observation_space.shape
         for traj in train_trajectories:
+            ends = ends_episode(self.env, traj)
             for i, (state, action, reward, next_state) in enumerate(traj):
-                done = i == len(traj) - 1
+                done = ends and i == len(traj) - 1
                 self.dqn.replay_buffer.add(
                     np.array(state).reshape(obs_shape),
                     np.array(next_state).reshape(obs_shape),
@@ -321,7 +349,7 @@ class DeepTrainerOracle(TrainerOracle):
             n = min(interval, total_steps - done)
             self.dqn.train(batch_size=self.config.batch_size, gradient_steps=n)
             done += n
-            if done < total_steps:  # a copy after the last chunk would never be used
+            if done < total_steps:
                 polyak_update(
                     self.dqn.q_net.parameters(), self.dqn.q_net_target.parameters(), 1.0
                 )
@@ -343,6 +371,10 @@ class DeepDiscretizingTrainerOracle(DeepTrainerOracle):
     observations) are released as 0. The table is released without noise; for a DP
     guarantee, use it as the sub-model of EnsemblingTrainerOracle, which clips, averages,
     and adds noise for the whole table.
+
+    Without points on a continuous space, there is no table: every query is answered with
+    the network's values at the queried observation itself. This is the undefended model
+    (no discretized release), for non-private baselines only.
     """
 
     def __init__(self, config: DeepDiscretizingTrainerOracleConfig):
@@ -350,29 +382,31 @@ class DeepDiscretizingTrainerOracle(DeepTrainerOracle):
         cfg = self.config
         obs_space = cfg.env.observation_space
         self.n_actions = int(cfg.env.action_space.n)
-        if isinstance(obs_space, gym.spaces.Box):
-            if cfg.points is None:
-                raise ValueError(
-                    "Continuous observation spaces need `points`, the public set of states to release Q values for"
-                )
+        self.continuous = isinstance(obs_space, gym.spaces.Box)
+        if self.continuous and cfg.points is not None:
             self.points = np.asarray(cfg.points, dtype=float)
             self.n_cells = len(self.points)
         else:
             self.points = None
-            self.n_cells = int(obs_space.n)
+            self.n_cells = None if self.continuous else int(obs_space.n)
 
     def release_key(self, state):
         """
-        The point nearest to the state by L2 distance (the state itself for discrete spaces).
+        The point nearest to the state by L2 distance (the state itself for discrete spaces,
+        and for continuous spaces without points).
         """
         if self.points is None:
-            return state
+            return tuple(np.asarray(state, dtype=float).flatten()) if self.continuous else state
         arr = np.asarray(state, dtype=float).flatten()
         idx = np.sqrt(np.sum((arr - self.points) ** 2, axis=1)).argmin()
         return tuple(self.points[idx].flatten())
 
     def max_changed_entries(self, max_shard_size: int, T_max: int) -> int:
         """Retraining the network can move every entry of the table."""
+        if self.n_cells is None:
+            raise ValueError(
+                "Without `points`, the released Q function is not a finite table, so its sensitivity is unbounded"
+            )
         return self.n_cells * self.n_actions
 
     def _released_q_vals(self, state) -> Dict[Union[int, Tuple], float]:
@@ -472,7 +506,7 @@ class DPSGDTrainerOracle(TrainerOracle):
             if self._is_terminal is not None:
                 dones[i, :t] = [float(self._is_terminal(step[3])) for step in traj]
             else:
-                dones[i, t - 1] = 1.0
+                dones[i, t - 1] = float(ends_episode(self.config.env, traj))
             mask[i, :t] = 1.0
         return TensorDataset(
             *(
@@ -639,8 +673,8 @@ class EnsemblingTrainerOracle(TrainerOracle):
 
     def __init__(self, config: EnsemblingTrainerOracleConfig):
         super().__init__(config)
-        self.config = config
         self.data_oracle = config.data_oracle
+        self.epsilon = config.epsilon  # privacy level of the current release; see release()
         self.reset()
 
     def reset(self):
@@ -660,20 +694,20 @@ class EnsemblingTrainerOracle(TrainerOracle):
         lo, hi = cfg.q_bounds
         if not (np.isfinite(lo) and np.isfinite(hi)):
             raise ValueError(
-                f"q_bounds {cfg.q_bounds} must be finite to calibrate noise (epsilon={cfg.epsilon}); use epsilon=None for no noise"
+                f"q_bounds {cfg.q_bounds} must be finite to calibrate noise (epsilon={self.epsilon}); use epsilon=None for no noise"
             )
         m = int(np.ceil(n_train / cfg.k))
         max_changed = self.trainer_oracles[0].max_changed_entries(m, T_max)
         sensitivity = (hi - lo) * np.sqrt(max_changed) / cfg.k
         log_term = np.log(1 / cfg.delta)
-        rho = (np.sqrt(log_term + cfg.epsilon) - np.sqrt(log_term)) ** 2
+        rho = (np.sqrt(log_term + self.epsilon) - np.sqrt(log_term)) ** 2
         std = float(sensitivity / np.sqrt(2 * rho))
         self.noise_info = {
             "m": m,
             "max_changed_pairs": max_changed,
             "l2_sensitivity": float(sensitivity),
             "rho": float(rho),
-            "epsilon": cfg.epsilon,
+            "epsilon": self.epsilon,
             "delta": cfg.delta,
             "noise_std": std,
         }
@@ -685,7 +719,7 @@ class EnsemblingTrainerOracle(TrainerOracle):
         in train(). epsilon=None releases the mean without noise (no formal guarantee).
         """
         mean = float(np.mean(vals))
-        if self.config.epsilon is None:
+        if self.epsilon is None:
             return mean
         return mean + np.random.normal(0.0, self._noise_std)
 
@@ -706,7 +740,7 @@ class EnsemblingTrainerOracle(TrainerOracle):
         epsilon, only the noise on the averaged table does, so this redraws the noise
         (lazily, per entry) at the new level and discards previously released values.
         """
-        self.config.epsilon = epsilon
+        self.epsilon = epsilon
         if epsilon is not None:
             self._noise_std = self._table_noise_std(self._n_train, self._T_max)
         self._released = {}
@@ -721,7 +755,7 @@ class EnsemblingTrainerOracle(TrainerOracle):
             )
 
         self._n_train, self._T_max = n_train, T_max
-        self.release(self.config.epsilon)
+        self.release(self.epsilon)
 
         # Generate once and partition, so each trajectory trains exactly one oracle
         trajectories = self.data_oracle.generate_trajectories(
@@ -743,14 +777,13 @@ class EnsemblingTrainerOracle(TrainerOracle):
 
 class DPAVIVITrainerOracle(TrainerOracle):
     """
-    DP-APVI (Qiao & Wang 2023, Algorithm 1), adapted to a stationary MDP: noisy counts
+    DP-APVI (Qiao & Wang 2022, Algorithm 1), adapted to a stationary MDP: noisy counts
     pooled over steps, then T_max rounds of pessimistic value iteration directly on the
     private model. H in the paper is T_max here.
     """
 
     def __init__(self, config: DPAVIVITrainerOracleConfig):
         super().__init__(config)
-        self.config = config
         self.data_oracle = config.data_oracle
         if not (
             isinstance(self.env.observation_space, gym.spaces.Discrete)
@@ -878,7 +911,11 @@ class DPAVIVITrainerOracle(TrainerOracle):
         )  # S * A * S
         del x
 
-        R = np.asarray(self.env.unwrapped._r_mat)  # S * A * S
+        # The algorithm assumes a known, public reward; only the transitions are private
+        R = cfg.reward_table if cfg.reward_table is not None else self.env.unwrapped._r_mat
+        R = np.asarray(R)
+        if R.ndim == 2:  # S * S': the same reward for every action
+            R = R[:, None, :]
         expected_reward = (prob_matrix * R).sum(axis=2)  # S * A
 
         V = np.zeros(S)

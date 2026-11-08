@@ -7,6 +7,5 @@ from .roc_analysis import (
 __all__ = [
     "load_runs",
     "average_roc",
-    "plot_log_roc",
     "plot_roc",
 ]

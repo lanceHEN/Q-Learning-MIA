@@ -8,28 +8,27 @@ from .trainer_oracle import (
     DPSGDTrainerOracle
 )
 from .cql_dqn import CQLDQN
-from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle, FeatureMappedDataOracle
-from .mia import MIAClassifier, ClusteringMIAClassifier, LRTMIAClassifier, SARSAMIA
+from .data_oracle import DataOracle, RandomDataOracle, QLearnerDataOracle, DQNDataOracle, CustomFixedPolicyDataOracle, FeatureMappedDataOracle, DiscretizedPolicyDataOracle
+from .mia import MIAClassifier, ClusteringMIAClassifier, LRTMIAClassifier
 from .generic_model import QLearner, all_actions
-from .wrappers import TupleObsToBox, HIVTreatmentEnv, ChemotherapyEnv, SepsisStateVectorObs
+from .wrappers import SepsisStateVectorObs, GlucoseEnv, GlucoseDiscreteObs
 
 __all__ = [
     "TrainerOracle",
     "RandomDataOracle",
     "QLearnerDataOracle",
     "MIAClassifier",
-    "SARSAMIA",
     "QLearner",
     "DQNDataOracle",
     "DataOracle",
     "DeepTrainerOracle",
     "DeepDiscretizingTrainerOracle",
     "CustomFixedPolicyDataOracle",
-    "TupleObsToBox",
-    "HIVTreatmentEnv",
-    "ChemotherapyEnv",
     "SepsisStateVectorObs",
+    "GlucoseEnv",
+    "GlucoseDiscreteObs",
     "FeatureMappedDataOracle",
+    "DiscretizedPolicyDataOracle",
     "ClusteringMIAClassifier",
     "LRTMIAClassifier",
     "all_actions",

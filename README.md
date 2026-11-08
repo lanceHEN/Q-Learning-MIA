@@ -21,18 +21,24 @@ pip install -r requirements.txt
 ## File Structure
 ```text
 config/
-├──component_config.py 
-├──experiment_config.py 
-├──__init__.py
+├── component_config.py
+├── experiment_config.py
+└── __init__.py
 src/
 ├── experimentation/
-│   ├── experiment.py
+│   ├── runner.py
+│   ├── setups.py
+│   ├── roc_analysis.py
 │   └── __init__.py
 └── model/
+    ├── cql_dqn.py
     ├── data_oracle.py
+    ├── generic_model.py
     ├── mia.py
     ├── trainer_oracle.py
+    ├── wrappers.py
     └── __init__.py
+run_experiment.py
 .gitignore
 README.md
 requirements.txt
@@ -50,3 +56,21 @@ Includes the Data Oracle in `data_oracle.py`, which collects trajectories to eit
 or used to train the Trainer Oracle in `trainer_oracle.py`. Finally, `mia.py`
 contains the attack classifier that will, given a trajectory, determine whether
 it is a training trajectory or not via a likelihood ratio test (LRT).
+
+### src/experimentation/
+`runner.py` runs one attack (`ExperimentRunner`) and sweeps over settings in
+parallel (`run_sweep`). `setups.py` holds each environment's settings and builds
+the configs for the ensemble, DP-APVI, and DP-SGD experiments. `roc_analysis.py`
+computes TPRs at low FPRs and ROC curves from the raw per-run results.
+
+## Running Experiments
+Run from the repository root. Each command runs one sweep (50 repeats per setting)
+and writes `data/tables/hyperparam_results_<name>.csv` and `data/tables/summary_<name>.csv`:
+```bash
+python run_experiment.py --env sepsis --method baseline --member tabular
+python run_experiment.py --env glucose --method baseline --member cql --no-grid
+python run_experiment.py --env sepsis --method ensemble --member cql
+python run_experiment.py --env glucose --method dpapvi
+python run_experiment.py --env sepsis --method dpsgd
+```
+See `python run_experiment.py --help` for all options.

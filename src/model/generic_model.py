@@ -174,21 +174,15 @@ class QLearner(QFunctionLearner):
             config (QLearnerConfig): Config info.
         """
         super().__init__(env=config.env, verbose=config.verbose, state_encoder=config.state_encoder)
-        
-        self.alpha = config.alpha
-        
         self.config = config
+        self.alpha = config.alpha # changes during training when a data oracle decays it
         self.reset()
         
     def reset(self):
         self.q_table = defaultdict(lambda: defaultdict(float))
         self.replay_buffer = deque(maxlen=self.config.buffer_size)
-        self.buffer_batch_size = self.config.buffer_batch_size
         self.observed_pairs = set()
-        
-        self.discount_factor = self.config.discount_factor
-        
-        self.epsilon = self.config.epsilon
+        self.epsilon = self.config.epsilon  # changes during training when a data oracle decays it
         
     def q_vals(self, state) -> Dict[Union[int, Tuple], float]:
         # Dense over all actions, so unseen actions get unseen_inference_val even when they
@@ -229,14 +223,11 @@ class QLearner(QFunctionLearner):
         self.observed_pairs.add((state, action))
         old_q = self.q_table[state][action]
         
-        # Max over the next state's actions: trained values for actions observed at next_state,
-        # unseen_training_val for the rest. Terminal next states have no observed actions, so
-        # they also get unseen_training_val; keep it at 0 so terminal states are worth 0.
         next_qv = self.q_table.get(next_state, {})
         observed = [next_qv.get(a, 0.0) for a in self.actions if (next_state, a) in self.observed_pairs]
         has_unseen = len(observed) < len(self.actions)
         max_next_qv = max(observed + ([cfg.unseen_training_val] if has_unseen else []))
         
-        new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + self.discount_factor * max_next_qv)
+        new_q = (1 - self.alpha) * old_q  + self.alpha * (reward + cfg.discount_factor * max_next_qv)
         
         self.q_table[state][action] = new_q

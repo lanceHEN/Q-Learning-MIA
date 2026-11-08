@@ -4,11 +4,9 @@ details.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import gymnasium as gym
-
-from .component_config import SARSAMIAConfig
 
 if TYPE_CHECKING:
     from src.model import TrainerOracle, MIAClassifier

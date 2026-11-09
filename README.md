@@ -1,9 +1,9 @@
 # Q Learning MIA
 
-This project focuses on MIAs against tabular Q learning algorithms. Essentially,
+This project focuses on MIAs against tabular and deep Q learning algorithms. Essentially,
 they leverage the idea that commonly visited state-action pairs should have
-lower Bellman residuals. Since trajectories used in training will typically have
-more of these pairs, they should yield a lower residual than average. This distinguishment
+lower squared Bellman residuals. Since trajectories used in training will typically have
+more of these pairs, they should yield a lower squared residual on average. This distinguishment
 can be used to assess whether a given trajectory was used in training.
 
 ## Repository Overview
@@ -55,7 +55,7 @@ Contains the full MIA architecture.
 Includes the Data Oracle in `data_oracle.py`, which collects trajectories to either be held out
 or used to train the Trainer Oracle in `trainer_oracle.py`. Finally, `mia.py`
 contains the attack classifier that will, given a trajectory, determine whether
-it is a training trajectory or not via a likelihood ratio test (LRT).
+it is a training trajectory or not via $k$-means clustering ($k=2$).
 
 ### src/experimentation/
 `runner.py` runs one attack (`ExperimentRunner`) and sweeps over settings in

@@ -11,7 +11,7 @@ can be used to assess whether a given trajectory was used in training.
 ### Installation
 1. Clone the repository:
 ```bash
-git clone https://github.com/lanceHEN/Q-Learning-MIA.git
+git clone <repository-url>
 ```
 2. Install dependencies:
 ```bash
@@ -38,6 +38,10 @@ src/
     ├── trainer_oracle.py
     ├── wrappers.py
     └── __init__.py
+notebooks/
+├── dp_plots.ipynb
+├── member_nonmember_scores.ipynb
+└── roc_curves.ipynb
 run_experiment.py
 .gitignore
 README.md
@@ -74,3 +78,15 @@ python run_experiment.py --env glucose --method dpapvi
 python run_experiment.py --env sepsis --method dpsgd
 ```
 See `python run_experiment.py --help` for all options.
+
+## Notebooks
+The notebooks in `notebooks/` make the paper's figures from the results the sweeps write
+(`data/tables/` and the raw per-run files in `data/raw_results/`), saving them under `data/plots/`.
+Run them from the `notebooks/` directory after the corresponding sweeps.
+
+- `member_nonmember_scores.ipynb`: member vs. non-member membership scores for single runs (the run
+  closest to the median AUC of each setting). Its last cell makes the paper's score figures: the tabular
+  and deep baselines at $n = 100$ and $1000$, and each mitigation compared across environments.
+- `dp_plots.ipynb`: AUC and return against the privacy budget $\varepsilon$, with 95% confidence bands,
+  comparing the ensemble with DP-APVI (tabular) or DP-SGD (deep).
+- `roc_curves.ipynb`: the attack's ROC curve, averaged over all runs of one setting.

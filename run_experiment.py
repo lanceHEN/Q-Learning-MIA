@@ -96,6 +96,10 @@ def main():
                         help="baseline CQL only: query the network at each exact observation instead of the grid")
     parser.add_argument("--repeats", type=int, default=50)
     parser.add_argument("--workers", type=int, help="parallel worker processes (default 6; 4 for dpsgd)")
+    parser.add_argument("--epsilons", nargs="+",
+                        help="run only these privacy budgets instead of the method's full grid; 'none' = no noise")
+    parser.add_argument("--tag", help="suffix for the results file names, e.g. to rerun some settings without "
+                                      "overwriting the full table (raw per-run files keep their usual names)")
     args = parser.parse_args()
 
     if args.method in ("baseline", "ensemble") and args.member is None:
@@ -110,15 +114,18 @@ def main():
         setups.dpapvi_reward_table(args.env, setups.make_tabular_env(args.env))  # build it once, before the workers start
 
     name = experiment_name(args)
-    table_name = name.replace("-", "_")
+    table_name = name.replace("-", "_") + (f"_{args.tag}" if args.tag else "")
     csv_path = f"data/tables/hyperparam_results_{table_name}.csv"
     summary_path = f"data/tables/summary_{table_name}.csv"
 
+    settings = sweep_settings(args, name)
+    if args.epsilons:
+        settings["ensemble_epsilon_list"] = [None if e.lower() == "none" else float(e) for e in args.epsilons]
     table = run_sweep(
         n_repeats=args.repeats,
         n_trajectories_list=setups.N_TRAJECTORIES,
         csv_path=csv_path,
-        **sweep_settings(args, name),
+        **settings,
     )
     table.to_csv(csv_path)
     print(table)

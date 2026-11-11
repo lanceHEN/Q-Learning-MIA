@@ -128,6 +128,9 @@ class DPSGDTrainerOracleConfig(TrainerOracleConfig):
     max_grad_norm: float = 1.0          
     epsilon: Optional[float] = 10.0      
     delta: float = 1e-5                 
+    # With epsilon None, still sample batches and clip per-trajectory gradients as DP-SGD does, adding
+    # no noise (the mechanism without its noise, like the ensemble's epsilon None). False trains plainly
+    clip_without_noise: bool = True
     neighboring_relation: str = "replace_one" 
     accountant: str = "prv" # Opacus accountant, used only with add_or_remove_one; replace_one uses dp_accounting's PLD accountant
     device: str = "cpu"

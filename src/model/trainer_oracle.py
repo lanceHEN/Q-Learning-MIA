@@ -562,7 +562,18 @@ class DPSGDTrainerOracle(TrainerOracle):
         optimizer = torch.optim.Adam(self.q_net.parameters(), lr=cfg.learning_rate)
         model = self.q_net
         engine = None
-        if cfg.epsilon is not None:
+        if cfg.epsilon is None and cfg.clip_without_noise:
+            # The mechanism without its noise: the same Poisson-sampled batches and per-trajectory
+            # clipping, with noise multiplier 0 (no privacy guarantee, so no accounting below)
+            engine = PrivacyEngine(accountant=cfg.accountant)
+            model, optimizer, loader = engine.make_private(
+                module=model,
+                optimizer=optimizer,
+                data_loader=loader,
+                noise_multiplier=0.0,
+                max_grad_norm=cfg.max_grad_norm,
+            )
+        elif cfg.epsilon is not None:
             engine = PrivacyEngine(accountant=cfg.accountant)
             if cfg.neighboring_relation == "replace_one":
                 # Same sample rate and step count Opacus would use: q = 1 / len(loader), T = epochs / q
@@ -617,8 +628,9 @@ class DPSGDTrainerOracle(TrainerOracle):
             "delta": cfg.delta,
             "steps": steps,
             "max_grad_norm": cfg.max_grad_norm,
+            "clipped": engine is not None,
         }
-        if engine is not None:
+        if engine is not None and cfg.epsilon is not None:
             sample_rate = float(1 / len(loader))
             if cfg.neighboring_relation == "replace_one":
                 interval = _pld_interval(cfg.epsilon)
@@ -643,6 +655,7 @@ class DPSGDTrainerOracle(TrainerOracle):
                     "accountant": cfg.accountant,
                 }
             )
+        if engine is not None:
             model.to_standard_module()  # removes Opacus's hooks; self.q_net keeps the trained weights
         if self.verbose:
             print(f"DP-SGD: {self.privacy_report}")

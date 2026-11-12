@@ -6,6 +6,7 @@ import numpy as np
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
 from matplotlib import pyplot as plt
+from matplotlib import patheffects
 from scipy.stats import gaussian_kde
 from sklearn.cluster import KMeans
 
@@ -130,14 +131,19 @@ class MIAClassifier:
         plt.close(fig)
         
     @staticmethod
-    def draw_score_strip(ax, scores, color, title, rng):
-        """One group's scores as a jittered strip on ax, with a dashed line at their mean."""
+    def draw_score_strip(ax, scores, color, title, rng, mean_color=None):
+        """One group's scores as a jittered strip on ax, with a dashed line at their mean.
+        The mean line (mean_color, default black) is drawn above the dots with a white outline,
+        so it stands out against dots of any color."""
         ax.scatter(
             scores,
             rng.uniform(-0.4, 0.4, len(scores)),
             color=color, alpha=0.8, s=16, linewidths=0,
         )
-        ax.axvline(scores.mean(), color=color, linestyle='--', linewidth=1.2)
+        ax.axvline(
+            scores.mean(), color=mean_color or "black", linestyle="--", linewidth=1.8, zorder=3,
+            path_effects=[patheffects.Stroke(linewidth=3.6, foreground="white"), patheffects.Normal()],
+        )
         ax.set_title(title)
         ax.set_yticks([])
         ax.spines['top'].set_visible(False)

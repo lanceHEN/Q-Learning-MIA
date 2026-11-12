@@ -74,17 +74,23 @@ def sweep_settings(args, name: str) -> dict:
 
 
 def report_data_oracle(env_name: str, data_oracle):
-    """Prints the behavior policy's mean return and how often it takes its greedy action."""
+    """Prints the behavior policy's mean return, how often it takes its greedy action,
+    and the average sorted probabilities."""
     eval_trajs = data_oracle.generate_trajectories(500, setups.T_MAX[env_name])
     mean_reward = np.mean([sum(r for _, _, r, _ in traj) for traj in eval_trajs])
     print(f"Data oracle mean reward: {mean_reward:.4f}")
     ps = []
+    all_probs = [] # [500, n_actions]
     for traj in eval_trajs:
         for state, *_ in traj:
             q_vals = data_oracle.q_vector(state)
             probs = np.exp((q_vals - np.max(q_vals)) / data_oracle.config.tau)
-            ps.append(np.max(probs / probs.sum()))
+            probs /= probs.sum()
+            ps.append(np.max(probs))
+            all_probs.append(np.sort(probs)[::-1])  # descending; this numpy's sort has no descending option
     print(f"Expected greedy selection %: {np.mean(ps):.3f}")
+    all_probs_means = np.mean(all_probs, axis=0)
+    print(f"Mean sorted probs : {all_probs_means}")
 
 
 def main():

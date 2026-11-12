@@ -1,3 +1,4 @@
+import os
 from typing import List, Tuple
 from abc import ABC, abstractmethod
 
@@ -25,27 +26,30 @@ class MIAClassifier:
     def _traj_membership_score(self, traj: List[Tuple]) -> Tuple[float, np.ndarray, np.ndarray]:
         """
         Computes the average squared Bellman residual over the transitions, along
-        with the array of raw residuals, and the array of raw q_values for each action
-        taken.
+        with the array of raw residuals, the array of raw q_values for each action
+        taken, and the array of targets.
         """
-        residuals, q_vals = self._residuals(traj)        
-        return np.mean((residuals**2)), residuals, q_vals
+        residuals, q_vals, targets = self._residuals(traj)        
+        return np.mean((residuals**2)), residuals, q_vals, targets
     
     def _residuals(self, traj: List[Tuple]) -> Tuple[np.ndarray, np.ndarray]:
         """
         Computes the array of Bellman residuals over the transitions, along with
-        raw q values.
+        raw q values and targets.
         """
         residuals = []
         q_vals = []
+        targets = []
         gamma = self.trainer_oracle.discount_factor
         for (state, action, reward, next_state) in traj:
             max_next_val = self.trainer_oracle.optimal_state_val(next_state)
             q_val = self.trainer_oracle.q_val(state, action)
-            residuals.append(reward + gamma * max_next_val - q_val)
+            target = reward + gamma * max_next_val
+            residuals.append(target - q_val)
+            targets.append(target)
             q_vals.append(q_val)
             
-        return np.array(residuals), np.array(q_vals)
+        return np.array(residuals), np.array(q_vals), np.array(targets)
     
     @abstractmethod
     def predict_membership(self, traj: List[Tuple]) -> int:
@@ -55,13 +59,14 @@ class MIAClassifier:
         """
         pass
     
-    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray]]:
+    def predict_memberships(self, trajs: List[List[Tuple]]) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
         """
         Predicts membership for each trajectory. Returns a tuple containing
         (1) a binary array with 1 for members and 0 for non-members,
         (2) an array of scores for each trajectory,
         (3) a list of residuals (each a numpy array of varying length) for each trajectory.
         (4) a list of q values (each a numpy array of varying length) for each trajectory.
+        (4) a list of targets (each a numpy array of varying length) for each trajectory.
         """
         pass
     
@@ -90,6 +95,37 @@ class MIAClassifier:
         fig.suptitle('Bellman Residual Distributions', y=1.01)
         fig.tight_layout()
         fig.savefig(f"data/plots/member_nonmember_residuals/{experiment_name}_residual_hist.png",
+                            dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+    @staticmethod
+    def plot_targets(member_targets, nonmember_targets, experiment_name):
+        """Member vs non-member target distributions (stacked, shared x-axis)"""
+        x_min = min(member_targets.min(), nonmember_targets.min())
+        x_max = max(member_targets.max(), nonmember_targets.max())
+        bins = np.linspace(x_min, x_max, 40)
+        
+        fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(7, 5), sharex=True)
+        
+        ax_top.hist(member_targets, bins=bins, color='steelblue', alpha=0.7, density=True)
+        ax_top.set_ylabel('Density')
+        ax_top.set_title(f'Member (mean={np.mean(member_targets):.3f}, std={np.std(member_targets):.3f})')
+        ax_top.spines['top'].set_visible(False)
+        ax_top.spines['right'].set_visible(False)
+        
+        ax_bot.hist(nonmember_targets, bins=bins, color='coral', alpha=0.7, density=True)
+        ax_bot.set_xlabel('Bellman Target')
+        ax_bot.set_ylabel('Density')
+        ax_bot.set_title(f'Non-member (mean={np.mean(nonmember_targets):.3f}, std={np.std(nonmember_targets):.3f})')
+        ax_bot.spines['top'].set_visible(False)
+        ax_bot.spines['right'].set_visible(False)
+        
+        all_targets = np.concatenate([member_targets, nonmember_targets])
+        
+        fig.suptitle(f'Bellman Target Distributions (mean={np.mean(all_targets):.3f}, std={np.std(all_targets):.3f})', y=1.01)
+        fig.tight_layout()
+        os.makedirs("data/plots/member_nonmember_targets", exist_ok=True)
+        fig.savefig(f"data/plots/member_nonmember_targets/{experiment_name}_target_hist.png",
                             dpi=150, bbox_inches='tight')
         plt.close(fig)
         
@@ -165,7 +201,7 @@ class ClusteringMIAClassifier(MIAClassifier):
         if self.clusters is None:
             raise RuntimeError("predict_memberships must be called first.")
 
-        score, _ = self._traj_membership_score(traj)
+        score, *_ = self._traj_membership_score(traj)
 
         return self.clusters.predict([[score]]).item()
     
@@ -173,11 +209,13 @@ class ClusteringMIAClassifier(MIAClassifier):
         scores = []
         residuals = []
         q_vals = []
+        targets = []
         for traj in trajs:
-            score, res, qv = self._traj_membership_score(traj)
+            score, res, qv, tg = self._traj_membership_score(traj)
             scores.append(score)
             residuals.append(res)
             q_vals.append(qv)
+            targets.append(tg)
         
         scores = np.array(scores)
         # Note: residuals and q_vals may have different lengths between each trajectory,
@@ -191,7 +229,7 @@ class ClusteringMIAClassifier(MIAClassifier):
         if labels[smallest_idx] == 0:
             labels = 1 - labels
         
-        return labels, scores, residuals, q_vals
+        return labels, scores, residuals, q_vals, targets
 
 class LRTMIAClassifier(MIAClassifier):
     """
@@ -229,11 +267,13 @@ class LRTMIAClassifier(MIAClassifier):
         scores = []
         residuals = []
         q_vals = []
+        targets = []
         for traj in trajs:
-            score, res, qv = self._traj_membership_score(traj)
+            score, res, qv, tg = self._traj_membership_score(traj)
             labels.append(self.predict_membership(traj))
             scores.append(score)
             residuals.append(res)
+            targets.append(tg)
             q_vals.append(qv)
             
         scores = np.array(scores)
@@ -241,7 +281,7 @@ class LRTMIAClassifier(MIAClassifier):
         # Note: residuals and q_vals may have different lengths between each trajectory,
         # so we keep them as lists (converting to 2d numpy is impossible w/ different dims)
 
-        return labels, scores, residuals, q_vals
+        return labels, scores, residuals, q_vals, targets
 
     def fit(self, train_trajectories: List[List[Tuple]], external_trajectories: List[List[Tuple]], fp_rate: float, experiment_name: str) -> None:
         """
@@ -252,12 +292,12 @@ class LRTMIAClassifier(MIAClassifier):
         nonmember_scores, nonmember_residuals = [], []
 
         for traj in train_trajectories:
-            score, residuals = self._traj_membership_score(traj)
+            score, residuals, _, _ = self._traj_membership_score(traj)
             member_scores.append(score)
             member_residuals.append(residuals)
 
         for traj in external_trajectories:
-            score, residuals = self._traj_membership_score(traj)
+            score, residuals, _, _ = self._traj_membership_score(traj)
             nonmember_scores.append(score)
             nonmember_residuals.append(residuals)
 

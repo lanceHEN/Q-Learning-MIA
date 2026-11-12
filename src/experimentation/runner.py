@@ -104,7 +104,7 @@ class ExperimentRunner:
         cfg = self.config
         all_trajs = train_trajs + external_trajs
 
-        preds, scores, residuals, q_vals = cfg.mia_classifier.predict_memberships(
+        preds, scores, residuals, q_vals, targets = cfg.mia_classifier.predict_memberships(
             all_trajs
         )
 
@@ -123,6 +123,11 @@ class ExperimentRunner:
             MIAClassifier.plot_residuals(
                 np.concatenate(residuals[:n_members]),
                 np.concatenate(residuals[n_members:]),
+                cfg.experiment_name,
+            )
+            MIAClassifier.plot_targets(
+                np.concatenate(targets[:n_members]),
+                np.concatenate(targets[n_members:]),
                 cfg.experiment_name,
             )
         roc_auc = MIAClassifier.roc_auc(

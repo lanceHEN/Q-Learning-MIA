@@ -40,8 +40,7 @@ src/
     └── __init__.py
 notebooks/
 ├── dp_plots.ipynb
-├── member_nonmember_scores.ipynb
-└── roc_curves.ipynb
+└── member_nonmember_scores.ipynb=
 run_experiment.py
 .gitignore
 README.md
@@ -65,10 +64,10 @@ it is a training trajectory or not via $k$-means clustering ($k=2$).
 `runner.py` runs one attack (`ExperimentRunner`) and sweeps over settings in
 parallel (`run_sweep`). `setups.py` holds each environment's settings and builds
 the configs for the ensemble, DP-APVI, and DP-SGD experiments. `roc_analysis.py`
-computes TPRs at low FPRs and ROC curves from the raw per-run results.
+has helpers to compute TPRs at low FPRs and ROC curves from the raw per-run results.
 
 ## Running Experiments
-Run from the repository root. Each command runs one sweep (50 repeats per setting)
+Run from the repository root. Each command runs one sweep with 50 repeats per setting
 and writes `data/tables/hyperparam_results_<name>.csv` and `data/tables/summary_<name>.csv`:
 ```bash
 python run_experiment.py --env sepsis --method baseline --member tabular
@@ -77,16 +76,12 @@ python run_experiment.py --env sepsis --method ensemble --member cql
 python run_experiment.py --env glucose --method dpapvi
 python run_experiment.py --env sepsis --method dpsgd
 ```
-See `python run_experiment.py --help` for all options.
 
 ## Notebooks
 The notebooks in `notebooks/` make the paper's figures from the results the sweeps write
 (`data/tables/` and the raw per-run files in `data/raw_results/`), saving them under `data/plots/`.
 Run them from the `notebooks/` directory after the corresponding sweeps.
 
-- `member_nonmember_scores.ipynb`: member vs. non-member membership scores for single runs (the run
-  closest to the median AUC of each setting). Its last cell makes the paper's score figures: the tabular
-  and deep baselines at $n = 100$ and $1000$, and each mitigation compared across environments.
+- `member_nonmember_scores.ipynb`: member vs. non-member membership scores for single runs. Its last cell makes the paper's score figures.
 - `dp_plots.ipynb`: AUC and return against the privacy budget $\varepsilon$, with 95% confidence bands,
   comparing the ensemble with DP-APVI (tabular) or DP-SGD (deep).
-- `roc_curves.ipynb`: the attack's ROC curve, averaged over all runs of one setting.

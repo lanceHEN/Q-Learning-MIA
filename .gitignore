@@ -209,5 +209,38 @@ __marimo__/
 .DS_Store
 MIA RL.pdf
 
-data/
+# Results: publish only the tables behind the paper (raw per-run results are too large for git)
+data/*
+!data/tables/
+data/tables/*
+!data/tables/hyperparam_results_sepsis_tabular_ensemble_baseline.csv
+!data/tables/summary_sepsis_tabular_ensemble_baseline.csv
+!data/tables/hyperparam_results_glucose_tabular_ensemble_baseline.csv
+!data/tables/summary_glucose_tabular_ensemble_baseline.csv
+!data/tables/hyperparam_results_sepsis_cql_ensemble_baseline.csv
+!data/tables/summary_sepsis_cql_ensemble_baseline.csv
+!data/tables/hyperparam_results_glucose_cql_ensemble_baseline_nogrid.csv
+!data/tables/summary_glucose_cql_ensemble_baseline_nogrid.csv
+!data/tables/hyperparam_results_sepsis_tabular_ensemble.csv
+!data/tables/summary_sepsis_tabular_ensemble.csv
+!data/tables/hyperparam_results_glucose_tabular_ensemble.csv
+!data/tables/summary_glucose_tabular_ensemble.csv
+!data/tables/hyperparam_results_sepsis_dpapvi.csv
+!data/tables/summary_sepsis_dpapvi.csv
+!data/tables/hyperparam_results_glucose_dpapvi.csv
+!data/tables/summary_glucose_dpapvi.csv
+!data/tables/hyperparam_results_sepsis_cql_ensemble.csv
+!data/tables/summary_sepsis_cql_ensemble.csv
+!data/tables/hyperparam_results_glucose_cql_ensemble.csv
+!data/tables/summary_glucose_cql_ensemble.csv
+!data/tables/hyperparam_results_sepsis_dpsgd.csv
+!data/tables/summary_sepsis_dpsgd.csv
+!data/tables/hyperparam_results_glucose_dpsgd.csv
+!data/tables/summary_glucose_dpsgd.csv
 models/
+# Paper source (contains the commented-out author block)
+paper.tex
+references.bib
+
+# Old results from early experiments, kept locally only
+/hyperparam_results_*.csv

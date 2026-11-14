@@ -38,9 +38,10 @@ src/
     ├── trainer_oracle.py
     ├── wrappers.py
     └── __init__.py
+data/tables/          # results behind the paper's tables (see below)
 notebooks/
 ├── dp_plots.ipynb
-└── member_nonmember_scores.ipynb=
+└── member_nonmember_scores.ipynb
 run_experiment.py
 .gitignore
 README.md
@@ -85,3 +86,10 @@ Run them from the `notebooks/` directory after the corresponding sweeps.
 - `member_nonmember_scores.ipynb`: member vs. non-member membership scores for single runs. Its last cell makes the paper's score figures.
 - `dp_plots.ipynb`: AUC and return against the privacy budget $\varepsilon$, with 95% confidence bands,
   comparing the ensemble with DP-APVI (tabular) or DP-SGD (deep).
+
+## Results
+`data/tables/` holds the results of the 12 sweeps behind the paper: `hyperparam_results_<name>.csv`
+(one row per run) and `summary_<name>.csv` (mean and standard deviation per setting), for the
+tabular and deep baselines and for each mitigation on ICU-Sepsis and Glucose. The raw per-run
+results (`data/raw_results/`), which `member_nonmember_scores.ipynb` reads, are too large for the
+repository; rerunning the corresponding sweeps recreates them.
